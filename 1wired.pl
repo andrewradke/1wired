@@ -1139,12 +1139,14 @@ sub LinkConnect {
 		);
     } elsif ($main::LinkType eq 'LinkSerial') {
       $socket=Device::SerialPort->new($LinkDev);
-      $socket->baudrate(9600);
-      $socket->databits(8);
-      $socket->parity('none');
-      $socket->stopbits(1);
-      $socket->read_char_time(0);                   # don't wait for each character
-      $socket->read_const_time(100);                # 100 millisecond per unfulfilled "read" call
+      if ($socket) {
+        $socket->baudrate(9600);
+        $socket->databits(8);
+        $socket->parity('none');
+        $socket->stopbits(1);
+        $socket->read_char_time(0);                   # don't wait for each character
+        $socket->read_const_time(100);                # 100 millisecond per unfulfilled "read" call
+      }
     }
     last if ($socket);
     $retry++;
