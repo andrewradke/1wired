@@ -277,31 +277,35 @@ foreach my $thread (threads->list) {
 
 sub report {
   my $socket = shift;
-  select $socket;
-  $| = 1;
 
-  print $socket "220 1wired\n";
-  my $command = (<$socket>);
+  my $select = IO::Select->new($socket);
+  my $command;
+
+  $socket->send("220 1wired\n");
+  if ($select->can_read(1)) {
+    $socket->recv($command,128);
+  }
   if ($command) {
     $command =~ s/[\r\n]//g;
     $command = lc($command);
     if ($command eq 'list') {
-      print $socket list();
+      $socket->send(list());
     } elsif ($command eq 'listdb') {
-      print $socket listdb();
+      $socket->send(listdb());
     } elsif ($command eq 'value all') {
-      print $socket value_all();
+      $socket->send(value_all());
     } elsif ($command =~ m/^value (.*)/) {
-      print $socket value($1);
+      $socket->send(value($1));
     } elsif ($command eq 'help') {
-      print $socket helpmsg();
+      $socket->send(helpmsg());
     } else {
-      print $socket "UNKNOWN command: $command\n";
-      print $socket helpmsg();
+      $socket->send("UNKNOWN command: $command\n");
+      $socket->send(helpmsg());
     }
   }
   close ($socket);
   $socket=undef;
+  $select=undef;
   # If the thread isn't detached then the following will cause a memory leak.
   # If threads->exit isn't used then perl will not remove it from memory and
   # that will also cause a memory leak.
