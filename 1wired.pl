@@ -999,7 +999,7 @@ sub value {
       return $output;
     }
   }
-  foreach $address (keys(%data)) {
+  foreach $address (keys(%deviceDB)) {
     $name = $deviceDB{$address}{name};
     if ($search eq lc($name)) {
       $output .= "Sensor $name not responding\n";
