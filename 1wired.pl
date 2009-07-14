@@ -1176,7 +1176,11 @@ sub LinkData {
     sleep $SleepTime;
     ($tmp,$returned) = $main::socket->read(1023);
   }
-  $returned =~ s/[?\r\n\0]*$//;
+  if (defined($returned)) {
+    $returned =~ s/[?\r\n\0]*$//;
+  } else {
+    $returned = '';
+  }
   return $returned;
 }
 
