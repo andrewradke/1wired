@@ -350,19 +350,19 @@ sub monitor_linkhub {
       logmsg 3, "Searching for devices on $LinkDev";
       @addresses = ();
 
-      $returned = LinkData("\n");	# Clear any initial state
-      $returned = LinkData("f\n");	# request first device ID
+      $returned = LinkData("\n");		# Clear any initial state
+      $returned = LinkData("f\n");		# request first device ID
 
       $returned =~ s/[-+,]//gs;
-      if (($returned eq 'E') || ($returned eq 'N') ) {                   # no devices found; move on to next linkhub
+      if ($returned eq 'N') {			# no devices found; move on to next linkhub
         logmsg 4, "No devices found on $LinkDev, closing socket.";
         $socket->close;
         $socket = undef;
         next;
       }
       $returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/;
-      if ($returned eq 'E') {
-        logmsg 1, "First device on $LinkDev returned E";
+      if ($returned =~ m/^.$/) {		# Error searching but we'll keep searching in case there are more devices
+        logmsg 1, "First device search on $LinkDev returned '$returned'";
       } elsif (! CRC($returned)) {
         logmsg 1, "CRC FAILED for device ID $returned";
       } else {
@@ -392,13 +392,14 @@ sub monitor_linkhub {
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
+        if ($returned =~ m/^.$/) {		# Error searching so we'll just move on in case there are more devices
+          logmsg 1, "Device search on $LinkDev returned '$returned'";
+          next;
+        }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/[-+,]//gs;
         $returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/;
-        if ($returned eq 'E') {
-          logmsg 1, "Device search on $LinkDev returned E";
-          next;
-        } elsif (! CRC($returned)) {
+        if (! CRC($returned)) {
           logmsg 1, "CRC FAILED for device ID $returned";
           next;
         }
@@ -435,10 +436,14 @@ sub monitor_linkhub {
 ### Begin addressing ALL devices
     $returned = LinkData("\n");			# Clear any initial state
     $returned = LinkData("r\n");		# issue a 1-wire reset
+    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
-    #sleep 0.1;					# wait 100ms for temperature conversion
+    sleep 0.1;					# wait 100ms for temperature conversion
+    $returned = LinkData("\n");			# Clear any initial state
     $returned = LinkData("r\n");		# issue a 1-wire reset
+    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
+    sleep 0.01;					# wait 10ms for voltage conversion
 ### End addressing ALL devices
 
 ### Begin query of devices on LinkHub
@@ -770,15 +775,14 @@ sub query_device {
         # It can also loose the data after a Skip ROM so we address them inidividually here
         $returned = LinkData("\n");			# Clear any initial state
         $returned = LinkData("r\n");			# issue a 1-wire reset
+        logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
         $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, ROM 0x55, address, convert T
         sleep 1;					# Give it time to convert T
       }
 
-      $returned = LinkData("r\n");		# issue a 1-wire reset
-      if ($returned ne 'P') {
-        logmsg 3, "ERROR: incorrect return value on fourth reset querying $address: ($returned)";
-        return 'ERROR';
-      }
+      $returned = LinkData("\n");			# Clear any initial state
+      $returned = LinkData("r\n");			# issue a 1-wire reset
+      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BEFFFFFFFFFFFFFFFFFF
       # BExxyyiijjkkllmmnnoo
@@ -808,22 +812,18 @@ sub query_device {
         return 'ERROR';
       }
     } else {
-      $returned = LinkData("r\n");	# issue a 1-wire reset
-      if ($returned ne 'P') {
-        logmsg 3, "ERROR: incorrect return data on reset querying $address: ($returned)";
-        return 'ERROR';
-      }
+      $returned = LinkData("\n");			# Clear any initial state
+      $returned = LinkData("r\n");			# issue a 1-wire reset
+      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
       $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 0xB800
       if ($returned ne "55${address}B800") {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
       }
   
-      $returned = LinkData("r\n");	# issue a 1-wire reset
-      if ($returned ne 'P') {
-        logmsg 3, "ERROR: incorrect return data on reset querying $address: ($returned)";
-        return 'ERROR';
-      }
+      $returned = LinkData("\n");			# Clear any initial state
+      $returned = LinkData("r\n");			# issue a 1-wire reset
+      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BE00FFFFFFFFFFFFFFFFFF
       # BE00xxyyzzaabbccddeeff
