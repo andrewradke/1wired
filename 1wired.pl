@@ -817,7 +817,7 @@ sub query_device {
       $returned = LinkData("\n");			# Clear any initial state
       $returned = LinkData("r\n");			# issue a 1-wire reset
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
-      $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 0xB800
+      $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 to scratch pad
       if ($returned ne "55${address}B800") {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
@@ -836,7 +836,7 @@ sub query_device {
       # bb: MSB for voltage
       # ff: CRC
 
-      $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, recall memory page 00 0xB800
+      $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 00
       if ( (length($returned) != 40) || (! $returned =~ m/^55${address}BE0000[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
@@ -845,7 +845,7 @@ sub query_device {
         logmsg 4, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
-      if ($returned =~ s/^55${address}BE[0-9A-F]{4}//) {
+      if ($returned =~ s/^55${address}BE00[0-9A-F]{2}//) {
         return $returned;
       } else {
         logmsg 2, "ERROR: returned data not valid for $address: $returned";
