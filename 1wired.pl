@@ -336,7 +336,7 @@ sub monitor_linkhub {
     $count++;
     $agedata{$LinkDev} = time();
 
-    $socket = LinkConnect($LinkDev);
+    $socket = LinkConnect($LinkDev) if (! $socket);
     next if (! $socket);		# Failed to connect
 
     $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
@@ -344,8 +344,6 @@ sub monitor_linkhub {
 ### Begin search for devices on LinkHub
     if ( ($LinkDevData{$LinkDev}{SearchNow}) || (($DoSearch) || (($AutoSearch) && ($count == 1))) ) {
       $LinkDevData{$LinkDev}{ds1820} = 0;
-      $DoSearch = 0 if (! $AutoSearch);
-      $LinkDevData{$LinkDev}{SearchNow} = 0;
       $LastDev = 0;
       logmsg 3, "Searching for devices on $LinkDev";
       @addresses = ();
@@ -356,10 +354,13 @@ sub monitor_linkhub {
       $returned =~ s/[-+,]//gs;
       if ($returned eq 'N') {			# no devices found; move on to next linkhub
         logmsg 4, "No devices found on $LinkDev, closing socket.";
-        $socket->close;
-        $socket = undef;
         next;
       }
+
+      # We have found at least one device so we can turn of the need to do more searches as required
+      $DoSearch = 0 if (! $AutoSearch);
+      $LinkDevData{$LinkDev}{SearchNow} = 0;
+
       $returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/;
       if ($returned =~ m/^.$/) {		# Error searching but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
@@ -369,7 +370,7 @@ sub monitor_linkhub {
         if (! defined($data{$returned})) {
           $data{$returned} = &share( {} );
         }
-        if ($data{$returned}{name} eq 'ignore') {
+        if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
           logmsg 1, "Ignoring $returned on $LinkDev.";
         } else {
           push (@addresses, $returned);
@@ -404,13 +405,13 @@ sub monitor_linkhub {
           next;
         }
         next if ($8 eq '01');				# ignore LinkHubEs
-        if ($data{$returned}{name} eq 'ignore') {
+        if (! defined($data{$returned})) {
+          $data{$returned} = &share( {} );
+        }
+        if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
           logmsg 1, "Ignoring $returned on $LinkDev.";
         } else {
           push (@addresses, $returned);
-        }
-        if (! defined($data{$returned})) {
-          $data{$returned} = &share( {} );
         }
         $data{$returned}{linkdev} = $LinkDev;
         $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
@@ -460,6 +461,7 @@ sub monitor_linkhub {
         $name = $data{$address}{name};
 
         logmsg 5, "querying $name ($address) as $type";
+        $name = $address if ($name eq 'UNKNOWN');
 
         $returned = query_device($socket,$select,$address,$LinkDev);
         my $retry = 0;
@@ -590,8 +592,8 @@ sub monitor_linkhub {
 
     $count = 0 if ($count > 1);
     logmsg 5, "Finished loop for $LinkDev, closing socket.";
-    $socket->close;
-    $socket = undef;
+    #$socket->close;
+    #$socket = undef;
     sleep $SlowDown if ($SlowDown);	# ***** This is only to slow down the rate of queries
   }
 }
@@ -610,7 +612,7 @@ sub monitor_linkth {
   my $address;
   my ($type, $name);
 
-  $socket = LinkConnect($LinkDev, 'LinkSerial');
+  $socket = LinkConnect($LinkDev) if (! $socket);
   next if (! $socket);				# Failed to connect
 
   $socket->write("\n");				# Clear any initial state
@@ -755,8 +757,8 @@ sub monitor_linkth {
     (@{$addresses{$LinkDev}}) = @addresses;
     $LinkDevData{$LinkDev}{SearchTime} = time();
   }
-  $socket->close;
-  $socket = undef;
+  #$socket->close;
+  #$socket = undef;
 }
 
 sub query_device {
