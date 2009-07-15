@@ -341,7 +341,10 @@ sub monitor_linkhub {
     $agedata{$LinkDev} = time();
 
     $socket = LinkConnect($LinkDev) if (! $socket);
-    next if (! $socket);		# Failed to connect
+    if (! $socket) {			# Failed to connect
+      sleep 10;				# Wait for 10 seconds before retrying
+      next;
+    }
 
     $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
 
@@ -356,7 +359,7 @@ sub monitor_linkhub {
       $returned = LinkData("f\n");		# request first device ID
 
       $returned =~ s/[-+,]//gs;
-      if ($returned eq 'N') {			# no devices found; move on to next linkhub
+      if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
         logmsg 4, "No devices found on $LinkDev, closing socket.";
         next;
       }
@@ -365,35 +368,38 @@ sub monitor_linkhub {
       $DoSearch = 0 if (! $AutoSearch);
       $LinkDevData{$LinkDev}{SearchNow} = 0;
 
-      $returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/;
       if ($returned =~ m/^.$/) {		# Error searching but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
-      } elsif (! CRC($returned)) {
-        logmsg 1, "CRC FAILED for device ID $returned";
-      } else {
-        if (! defined($data{$returned})) {
-          $data{$returned} = &share( {} );
-        }
-        if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
-          logmsg 1, "Ignoring $returned on $LinkDev.";
+      } elsif ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
+        if (! CRC($returned)) {
+          logmsg 1, "CRC FAILED for device ID $returned";
         } else {
-          push (@addresses, $returned);
+          if (! defined($data{$returned})) {
+            $data{$returned} = &share( {} );
+          }
+          if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
+            logmsg 1, "Ignoring $returned on $LinkDev.";
+          } else {
+            push (@addresses, $returned);
+          }
+          $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
+          $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
+          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
+            # DS18B20
+            logmsg 3, "Setting device $returned type to 'tsense'";
+            $data{$returned}{type} = 'tsense';
+          }
+          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
+            # DS1820 or DS18S20
+            logmsg 3, "Setting device $returned type to 'ds1820'";
+            $data{$returned}{type} = 'ds1820';
+            $LinkDevData{$LinkDev}{ds1820} = 1;
+          }
+          logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
         }
-        $data{$returned}{linkdev} = $LinkDev;
-        $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
-        $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
-        if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
-          # DS18B20
-          logmsg 3, "Setting device $returned type to 'tsense'";
-          $data{$returned}{type} = 'tsense';
-        }
-        if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
-          # DS1820 or DS18S20
-          logmsg 3, "Setting device $returned type to 'ds1820'";
-          $data{$returned}{type} = 'ds1820';
-          $LinkDevData{$LinkDev}{ds1820} = 1;
-        }
-        logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
+      } else {
+        logmsg 1, "Bad data returned on search of $LinkDev: $returned";
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
@@ -403,33 +409,36 @@ sub monitor_linkhub {
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/[-+,]//gs;
-        $returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/;
-        if (! CRC($returned)) {
-          logmsg 1, "CRC FAILED for device ID $returned";
-          next;
-        }
-        next if ($8 eq '01');				# ignore LinkHubEs
-        if (! defined($data{$returned})) {
-          $data{$returned} = &share( {} );
-        }
-        if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
-          logmsg 1, "Ignoring $returned on $LinkDev.";
+        if ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
+          if (! CRC($returned)) {
+            logmsg 1, "CRC FAILED for device ID $returned";
+            next;
+          }
+          next if ($8 eq '01');				# ignore LinkHubEs
+          if (! defined($data{$returned})) {
+            $data{$returned} = &share( {} );
+          }
+          if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
+            logmsg 1, "Ignoring $returned on $LinkDev.";
+          } else {
+            push (@addresses, $returned);
+          }
+          $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
+          $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
+          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
+            logmsg 3, "Setting device $returned type to 'tsense'";
+            $data{$returned}{type} = 'tsense';
+          }
+          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
+            logmsg 3, "Setting device $returned type to 'ds1820'";
+            $data{$returned}{type} = 'ds1820';
+            $LinkDevData{$LinkDev}{ds1820} = 1;
+          }
+          logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
-          push (@addresses, $returned);
+          logmsg 1, "Bad data returned on search of $LinkDev: $returned";
         }
-        $data{$returned}{linkdev} = $LinkDev;
-        $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
-        $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
-        if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
-          logmsg 3, "Setting device $returned type to 'tsense'";
-          $data{$returned}{type} = 'tsense';
-        }
-        if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
-          logmsg 3, "Setting device $returned type to 'ds1820'";
-          $data{$returned}{type} = 'ds1820';
-          $LinkDevData{$LinkDev}{ds1820} = 1;
-        }
-        logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
       }
       logmsg 5, "Found last device on $LinkDev.";
 
@@ -595,7 +604,7 @@ sub monitor_linkhub {
 ### End query of devices on LinkHub
 
     $count = 0 if ($count > 1);
-    logmsg 5, "Finished loop for $LinkDev, closing socket.";
+    #logmsg 5, "Finished loop for $LinkDev, closing socket.";
     #$socket->close;
     #$socket = undef;
     sleep $SlowDown if ($SlowDown);	# ***** This is only to slow down the rate of queries
@@ -879,8 +888,8 @@ sub list {
   }
 
   foreach (@addresses) {
-    s/^[?!,]*//;
-    s/[\r\n\0]//g;
+    s/[\r\n\0]//g;		# Remove any CR, LF or NULL characters first
+    s/^[?!,]*//;		# THEN remove appropriate any leading characters
     if ((defined($deviceDB{$_})) && (defined($deviceDB{$_}{name})) ) {
       $output .= "Device found:\t $deviceDB{$_}{name} ($_)\n";
     } else {
