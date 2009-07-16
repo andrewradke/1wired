@@ -356,7 +356,9 @@ sub monitor_linkhub {
       @addresses = ();
 
       $returned = LinkData("\n");		# Clear any initial state
+      next if (! defined($socket));
       $returned = LinkData("f\n");		# request first device ID
+      next if (! defined($socket));
 
       $returned =~ s/[-+,]//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
@@ -403,6 +405,7 @@ sub monitor_linkhub {
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
+        next if (! defined($socket));
         if ($returned =~ m/^.$/) {		# Error searching so we'll just move on in case there are more devices
           logmsg 1, "Device search on $LinkDev returned '$returned'";
           next;
@@ -449,14 +452,20 @@ sub monitor_linkhub {
 
 ### Begin addressing ALL devices
     $returned = LinkData("\n");			# Clear any initial state
+    next if (! defined($socket));
     $returned = LinkData("r\n");		# issue a 1-wire reset
+    next if (! defined($socket));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
+    next if (! defined($socket));
     sleep 0.1;					# wait 100ms for temperature conversion
     $returned = LinkData("\n");			# Clear any initial state
+    next if (! defined($socket));
     $returned = LinkData("r\n");		# issue a 1-wire reset
+    next if (! defined($socket));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
+    next if (! defined($socket));
     sleep 0.01;					# wait 10ms for voltage conversion
 ### End addressing ALL devices
 
@@ -789,14 +798,19 @@ sub query_device {
         # Original ds1820 needs the bus pulled higher for longer for parasitic power
         # It can also loose the data after a Skip ROM so we address them inidividually here
         $returned = LinkData("\n");			# Clear any initial state
+        return 'ERROR' if (! defined($socket));
         $returned = LinkData("r\n");			# issue a 1-wire reset
+        return 'ERROR' if (! defined($socket));
         logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
         $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, ROM 0x55, address, convert T
+        return 'ERROR' if (! defined($socket));
         sleep 1;					# Give it time to convert T
       }
 
       $returned = LinkData("\n");			# Clear any initial state
+      return 'ERROR' if (! defined($socket));
       $returned = LinkData("r\n");			# issue a 1-wire reset
+      return 'ERROR' if (! defined($socket));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BEFFFFFFFFFFFFFFFFFF
@@ -812,6 +826,7 @@ sub query_device {
       # oo CRC
 
       $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read command BE, 9 bytes FF
+      return 'ERROR' if (! defined($socket));
       if ( (length($returned) != 38) || (! $returned =~ m/^55${address}BE[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
@@ -828,16 +843,21 @@ sub query_device {
       }
     } else {
       $returned = LinkData("\n");			# Clear any initial state
+      return 'ERROR' if (! defined($socket));
       $returned = LinkData("r\n");			# issue a 1-wire reset
+      return 'ERROR' if (! defined($socket));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
       $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 to scratch pad
+      return 'ERROR' if (! defined($socket));
       if ($returned ne "55${address}B800") {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
       }
   
       $returned = LinkData("\n");			# Clear any initial state
+      return 'ERROR' if (! defined($socket));
       $returned = LinkData("r\n");			# issue a 1-wire reset
+      return 'ERROR' if (! defined($socket));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BE00FFFFFFFFFFFFFFFFFF
@@ -850,6 +870,7 @@ sub query_device {
       # ff: CRC
 
       $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 00
+      return 'ERROR' if (! defined($socket));
       if ( (length($returned) != 40) || (! $returned =~ m/^55${address}BE0000[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
@@ -1179,15 +1200,28 @@ sub LinkData {
   my $returned;
   my $tmp;
   if ($main::LinkType eq 'LinkHubE') {
-    $main::socket->send($send);
-    sleep $SleepTime;
-    if ($main::select->can_read(1)) {
-      $main::socket->recv($returned,128);
+    if (defined($main::socket)) {
+      $main::socket->send($send);
+      sleep $SleepTime;
+      if ($main::select->can_read(1)) {
+        $main::socket->recv($returned,128);
+      } else {
+        logmsg 1, "Couldn't read from socket. Closing connection.";
+        $main::socket->close;
+        $main::socket = undef;
+      }
     }
   } elsif ($main::LinkType eq 'LinkSerial') {
-    $main::socket->write($send);
-    sleep $SleepTime;
-    ($tmp,$returned) = $main::socket->read(1023);
+    if (defined($main::socket)) {
+      $main::socket->write($send);
+      sleep $SleepTime;
+      ($tmp,$returned) = $main::socket->read(1023);
+      if (!defined($returned)) {
+        logmsg 1, "Couldn't read from socket. Closing connection.";
+        $main::socket->close;
+        $main::socket = undef;
+      }
+    }
   }
   if (defined($returned)) {
     $returned =~ s/[?\r\n\0]*$//;
