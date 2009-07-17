@@ -471,6 +471,7 @@ sub monitor_linkhub {
 
 ### Begin query of devices on LinkHub
     foreach $address (@addresses) {
+      last if (! defined($socket));
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
       if ($data{$address}{linkdev} eq $LinkDev) {
         if (! $data{$address}{type}) {
@@ -1225,6 +1226,7 @@ sub LinkData {
   }
   if (defined($returned)) {
     $returned =~ s/[?\r\n\0]*$//;
+    $returned =~ s/^\?*//;
   } else {
     $returned = '';
   }
