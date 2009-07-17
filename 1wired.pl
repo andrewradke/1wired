@@ -315,7 +315,7 @@ sub report {
 }
 
 sub monitor_linkhub {
-  my $LinkDev = shift;
+  our $LinkDev = shift;
   logmsg 1, "Monitoring LinkHub $LinkDev";
   our $LinkType = 'LinkHubE';
   if ($LinkDev =~ m/^\/dev\//) {
@@ -1186,13 +1186,14 @@ sub LinkConnect {
     last if ($socket);
     $retry++;
     if ($retry > 5) {
-      logmsg 1, "Couldn't connect to $LinkDev after 5 retries: $!";
+      logmsg 2, "Couldn't connect to $LinkDev after 5 retries: $!";
       last;
     }
 
     logmsg 4, "Couldn't connect to $LinkDev $!, retrying... (attempt $retry)";
     sleep 1;
   }
+  logmsg 1, "Connected to $LinkDev" if ($socket);
   return $socket;
 }
 
@@ -1207,7 +1208,7 @@ sub LinkData {
       if ($main::select->can_read(1)) {
         $main::socket->recv($returned,128);
       } else {
-        logmsg 1, "Couldn't read from socket. Closing connection.";
+        logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
         $main::socket->close;
         $main::socket = undef;
       }
@@ -1218,7 +1219,7 @@ sub LinkData {
       sleep $SleepTime;
       ($tmp,$returned) = $main::socket->read(1023);
       if (!defined($returned)) {
-        logmsg 1, "Couldn't read from socket. Closing connection.";
+        logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
         $main::socket->close;
         $main::socket = undef;
       }
