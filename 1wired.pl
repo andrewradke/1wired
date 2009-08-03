@@ -491,19 +491,16 @@ sub monitor_linkhub {
         while ($returned eq 'ERROR') {
           $retry++;
           if ($retry > 5) {
-            #logmsg 1, "Couldn't get valid data for $name ($LinkDev:$address)";
-            logmsg 1, "Couldn't get valid data for $name";
+            logmsg 1, "Couldn't get valid data for $LinkDev:$name";
             last;
           }
-          #logmsg 3, "Didn't get valid data for $name ($LinkDev:$address), retrying... (attempt $retry)";
-          logmsg 3, "Didn't get valid data for $name, retrying... (attempt $retry)";
+          logmsg 3, "Didn't get valid data for $LinkDev:$name, retrying... (attempt $retry)";
           $returned = query_device($socket,$select,$address,$LinkDev);
         }
 
         if ($returned ne 'ERROR') {
           if (! CRC($returned) ) {
-            #logmsg 1, "CRC error for $name ($LinkDev:$address), $returned";
-            logmsg 1, "CRC error for $name: $returned";
+            logmsg 1, "CRC error for $LinkDev:$name: $returned";
             next;
           }
           $temperature = $returned;
@@ -547,6 +544,7 @@ sub monitor_linkhub {
 
           $voltage =~ s/^(..)(..)$/$2$1/;
           $voltage = hex $voltage;
+          $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
           $voltage = $voltage*0.01;             # each unit is 10mV
           $data{$address}{raw} = $voltage;
           logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
@@ -692,6 +690,7 @@ sub monitor_linkth {
         $name = $data{$address}{name};
         #$type = $data{$address}{type};
 
+        $voltage = 0 if ($voltage == 1023);		# 1023 inidicates a short or 0V
         $voltage = $voltage*0.01;			# each unit is 10mV
         $data{$address}{raw} = $voltage;
         logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
