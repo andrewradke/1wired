@@ -362,19 +362,21 @@ sub monitor_linkhub {
 
       $returned =~ s/[-+,]//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
-        logmsg 4, "No devices found on $LinkDev, closing socket.";
+        logmsg 4, "No devices found on $LinkDev";
         next;
       }
 
-      # We have found at least one device so we can turn of the need to do more searches as required
+      # We have found at least one device so we can turn off the need to do more searches
       $DoSearch = 0 if (! $AutoSearch);
       $LinkDevData{$LinkDev}{SearchNow} = 0;
 
-      if ($returned =~ m/^.$/) {		# Error searching but we'll keep searching in case there are more devices
+      if ($returned =~ m/^.$/) {			# Error but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
+        $LinkDevData{$LinkDev}{SearchNow} = 1;		# Try another search next time due to error
       } elsif ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
         if (! CRC($returned)) {
-          logmsg 1, "CRC FAILED for device ID $returned";
+          logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
+          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
         } else {
           if (! defined($data{$returned})) {
             $data{$returned} = &share( {} );
@@ -402,12 +404,14 @@ sub monitor_linkhub {
         }
       } else {
         logmsg 1, "Bad data returned on search of $LinkDev: $returned";
+        $LinkDevData{$LinkDev}{SearchNow} = 1;		# Try another search next time due to error
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
         next if (! defined($socket));
-        if ($returned =~ m/^.$/) {		# Error searching so we'll just move on in case there are more devices
+        if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
           logmsg 1, "Device search on $LinkDev returned '$returned'";
+          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
           next;
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
@@ -415,6 +419,7 @@ sub monitor_linkhub {
         if ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
           if (! CRC($returned)) {
             logmsg 1, "CRC FAILED for device ID $returned";
+            $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
             next;
           }
           next if ($8 eq '01');				# ignore LinkHubEs
@@ -441,6 +446,7 @@ sub monitor_linkhub {
           logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
           logmsg 1, "Bad data returned on search of $LinkDev: $returned";
+          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
         }
       }
       logmsg 5, "Found last device on $LinkDev.";
@@ -1061,7 +1067,7 @@ EOF
 
 sub RecordRRDs {
   my @addresses;
-  my ($address, $name, $temperature, $minute, $age);
+  my ($address, $name, $temperature, $minute, $age, $rrdage);
   my ($rrdfile, $rrderror, $updatetime);
   while(1) {
     @addresses = ();
@@ -1076,10 +1082,20 @@ sub RecordRRDs {
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
       next if ($name eq 'UNKNOWN');
+
       $temperature = $data{$address}{temperature};
       $minute      = $data{$address}{minute};
       $temperature = 'U' unless defined($temperature);
       $minute      = 'U' unless defined($minute);
+      if (defined($data{$address}{rrdage})) {
+        $rrdage    = $data{$address}{rrdage};
+      } else {
+        $rrdage    = 0;
+      }
+      if (($updatetime - $rrdage) < 60) {
+        logmsg 1, "ERROR last update to RRD for $name less than 60s ago (".($updatetime - $rrdage)."s)";
+        next;
+      }
       if (defined($data{$address}{age})) {
         $age       = time - $data{$address}{age};
         if ($age > 10) {
@@ -1095,7 +1111,11 @@ sub RecordRRDs {
       if (-w $rrdfile) {
         RRDs::update ($rrdfile, "$updatetime:$temperature:$minute");
         $rrderror=RRDs::error;
-        logmsg (1, "ERROR while updating RRD file for $name: $rrderror") if $rrderror;
+        if ($rrderror) {
+          logmsg 1, "ERROR while updating RRD file for $name: $rrderror";
+        } else {
+          $data{$address}{rrdage} = $updatetime;
+        }
       } else {
         # Create RRD file
         logmsg (1, "Creating $rrdfile");
