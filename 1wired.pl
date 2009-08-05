@@ -150,12 +150,13 @@ if ($LogLevel && $RunAsDaemon) {
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
 sub logmsg {
+  my $tid = threads->tid();
   my $level = shift;
   if ($level <= $LogLevel) {
     if ($RunAsDaemon) {
-      print LOG scalar localtime, " $0\[$$\]: @_\n";
+      print LOG scalar localtime, " $0\[$$\]: ($tid) @_\n";
     } else {
-      print scalar localtime, " $0\[$$\]: @_\n";
+      print scalar localtime, " $0\[$$\]: ($tid) @_\n";
     }
   }
 }
@@ -206,11 +207,11 @@ $SIG{'HUP'} = sub {
   foreach my $LinkDev (@LinkHubs) {
     $LinkDevData{$LinkDev}{SearchNow} = 1;
   }
+  logmsg 2, "Search for new devices will be done on the next pass.";
 };
 
 
 ### Beginning of listener
-### Nothing after this will run since this is a continual loop
 my $server_sock;
 if ($ListenPort =~ m/^\d+$/) {
   logmsg 1, "Creating listener on port $ListenPort";
@@ -247,6 +248,10 @@ my $listener;
 my $client;
 while (1) {	# This is needed to restart the listening loop after a sig hup
   while ($client = $server_sock->accept()) {
+
+    ### Without the following the report thread will occasionally receive the signal too and it will eventually result in a segfault
+    local $SIG{'HUP'} = 'IGNORE';	# we do not want the thread that processes queries to act on a SIGHUP
+
     logmsg 5, "Connection on socket $ListenPort";
     $listener = threads->new(\&report, $client);
     $listener->detach;
@@ -260,6 +265,7 @@ if (! ($ListenPort =~ m/^\d+$/)) {
   logmsg(1, "Removing socket on $ListenPort");
   unlink "$ListenPort";
 }
+### Nothing after this will run since this is a continual loop
 ### End of listener
 
 
@@ -925,7 +931,7 @@ sub list {
   }
   foreach $tmp (keys(%deviceDB)) {
     if (! grep $_ eq $tmp, @addresses) {
-      $output .= "NOT RESPONDING:\t $deviceDB{$tmp}{name} ($tmp)\n";
+      $output .= "NOT RESPONDING:\t $deviceDB{$tmp}{name} ($tmp)\n" unless ($deviceDB{$tmp}{name} eq 'ignore');
     }
   }
   return $output;
@@ -1162,6 +1168,12 @@ sub ParseDeviceFile {
       }
       $deviceDB{$1}{name} = $2;
       $deviceDB{$1}{type} = $3;
+
+      if (! defined($data{$1})) {	# Check this seperately as assigning $deviceDB to $data otherwise if this is being run from a SIGHUP would cause existing values in $data to be lost
+        $data{$1} = &share( {} );
+      }
+      $data{$1}{name} = $2;
+      $data{$1}{type} = $3;
     } else {
       logmsg 1, "Unrecognised line in devices file:\n$_";
       $errors = 1;
@@ -1172,7 +1184,6 @@ sub ParseDeviceFile {
   if (! keys(%deviceDB)) {
     logmsg 1, "Warning: No devices defined in $DeviceFile\n";
   }
-  %data = %deviceDB;
 }
 
 sub LinkConnect {
