@@ -33,6 +33,7 @@ my $LogLevel = 5;
 my $UseRRDs = 0;
 my $RRDsDir = '/var/1wired';
 my $AutoSearch = 1;
+my $ReSearchOnError = 1;
 
 my ($option, $value);
 open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
@@ -86,6 +87,12 @@ while (<CONFIG>) {
         $AutoSearch = 0 if ($value =~ m/^(0|false|no)$/i);
       } else {
         print STDERR "AutoSearch value defined in config file ($value) is not valid. Using default ($AutoSearch).\n";
+      }
+    } elsif ($option eq 'ReSearchOnError') {
+      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+        $ReSearchOnError = 0 if ($value =~ m/^(0|false|no)$/i);
+      } else {
+        print STDERR "ReSearchOnError value defined in config file ($value) is not valid. Using default ($ReSearchOnError).\n";
       }
     } elsif ($option eq 'SleepTime') {
       if ($value =~ m/^\d+(\.\d+|)$/) {
@@ -378,11 +385,11 @@ sub monitor_linkhub {
 
       if ($returned =~ m/^.$/) {			# Error but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
-        $LinkDevData{$LinkDev}{SearchNow} = 1;		# Try another search next time due to error
+        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
         if (! CRC($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
-          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
+          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         } else {
           if (! defined($data{$returned})) {
             $data{$returned} = &share( {} );
@@ -410,14 +417,14 @@ sub monitor_linkhub {
         }
       } else {
         logmsg 1, "Bad data returned on search of $LinkDev: $returned";
-        $LinkDevData{$LinkDev}{SearchNow} = 1;		# Try another search next time due to error
+        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
         next if (! defined($socket));
         if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
           logmsg 1, "Device search on $LinkDev returned '$returned'";
-          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
+          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
           next;
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
@@ -425,7 +432,7 @@ sub monitor_linkhub {
         if ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
           if (! CRC($returned)) {
             logmsg 1, "CRC FAILED for device ID $returned";
-            $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
+            $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
           next if ($8 eq '01');				# ignore LinkHubEs
@@ -452,9 +459,10 @@ sub monitor_linkhub {
           logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
           logmsg 1, "Bad data returned on search of $LinkDev: $returned";
-          $LinkDevData{$LinkDev}{SearchNow} = 1;	# Try another search next time due to error
+          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         }
       }
+      logmsg 1, "An error during the search on $LinkDev produced an error. Another search has been requested." if ($LinkDevData{$LinkDev}{SearchNow});
       logmsg 5, "Found last device on $LinkDev.";
 
       (@{$addresses{$LinkDev}}) = @addresses;
