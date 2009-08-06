@@ -91,7 +91,7 @@ while (<CONFIG>) {
       }
     } elsif ($option eq 'IgnoreCRCErrors') {
       if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $IgnoreCRCErrors = 0 if ($value =~ m/^(0|false|no)$/i);
+        $IgnoreCRCErrors = 1 if ($value =~ m/^(1|true|yes)$/i);
       } else {
         print STDERR "IgnoreCRCErrors value defined in config file ($value) is not valid. Using default ($IgnoreCRCErrors).\n";
       }
@@ -450,9 +450,9 @@ sub monitor_linkhub {
             next;
           }
           if (! CRC($returned)) {
-            logmsg 1, "CRC FAILED for device ID $returned";
+            logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
-            next unless ($IgnoreCRCErrors);
+            next;
           }
           next if ($8 eq '01');				# ignore LinkHubEs
           if (! defined($data{$returned})) {
