@@ -34,6 +34,7 @@ my $UseRRDs = 0;
 my $RRDsDir = '/var/1wired';
 my $AutoSearch = 1;
 my $ReSearchOnError = 1;
+my $IgnoreCRCErrors = 0;
 
 my ($option, $value);
 open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
@@ -87,6 +88,12 @@ while (<CONFIG>) {
         $AutoSearch = 0 if ($value =~ m/^(0|false|no)$/i);
       } else {
         print STDERR "AutoSearch value defined in config file ($value) is not valid. Using default ($AutoSearch).\n";
+      }
+    } elsif ($option eq 'IgnoreCRCErrors') {
+      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+        $IgnoreCRCErrors = 0 if ($value =~ m/^(0|false|no)$/i);
+      } else {
+        print STDERR "IgnoreCRCErrors value defined in config file ($value) is not valid. Using default ($IgnoreCRCErrors).\n";
       }
     } elsif ($option eq 'ReSearchOnError') {
       if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
@@ -369,9 +376,9 @@ sub monitor_linkhub {
       @addresses = ();
 
       $returned = LinkData("\n");		# Clear any initial state
-      next if (! defined($socket));
+      next if (! CheckData($returned));
       $returned = LinkData("f\n");		# request first device ID
-      next if (! defined($socket));
+      next if (! CheckData($returned));
 
       $returned =~ s/[-+,]//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
@@ -386,6 +393,9 @@ sub monitor_linkhub {
       if ($returned =~ m/^.$/) {			# Error but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+      } elsif ($returned eq '0000000000000000') {
+        logmsg 1, "First device search on $LinkDev returned '$returned'";
+        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
         if (! CRC($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
@@ -397,7 +407,11 @@ sub monitor_linkhub {
           if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
             logmsg 1, "Ignoring $returned on $LinkDev.";
           } else {
-            push (@addresses, $returned);
+            if (grep( /^$returned$/,@addresses ) ) {
+              logmsg 1, "$LinkDev:$returned already found.";
+            } else {
+              push (@addresses, $returned);
+            }
           }
           $data{$returned}{linkdev} = $LinkDev;
           $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
@@ -421,7 +435,7 @@ sub monitor_linkhub {
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
-        next if (! defined($socket));
+        next if (! CheckData($returned));
         if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
           logmsg 1, "Device search on $LinkDev returned '$returned'";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -430,10 +444,15 @@ sub monitor_linkhub {
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/[-+,]//gs;
         if ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
+          if ($returned eq '0000000000000000') {
+            logmsg 1, "Device search on $LinkDev returned '$returned'";
+            $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+            next;
+          }
           if (! CRC($returned)) {
             logmsg 1, "CRC FAILED for device ID $returned";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
-            next;
+            next unless ($IgnoreCRCErrors);
           }
           next if ($8 eq '01');				# ignore LinkHubEs
           if (! defined($data{$returned})) {
@@ -442,6 +461,10 @@ sub monitor_linkhub {
           if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
             logmsg 1, "Ignoring $returned on $LinkDev.";
           } else {
+            if (grep( /^$returned$/,@addresses ) ) {
+              logmsg 1, "$LinkDev:$returned already found.";
+              next;
+            }
             push (@addresses, $returned);
           }
           $data{$returned}{linkdev} = $LinkDev;
@@ -472,20 +495,20 @@ sub monitor_linkhub {
 
 ### Begin addressing ALL devices
     $returned = LinkData("\n");			# Clear any initial state
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     $returned = LinkData("r\n");		# issue a 1-wire reset
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     sleep 0.1;					# wait 100ms for temperature conversion
     $returned = LinkData("\n");			# Clear any initial state
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     $returned = LinkData("r\n");		# issue a 1-wire reset
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
-    next if (! defined($socket));
+    next if (! CheckData($returned));
     sleep 0.01;					# wait 10ms for voltage conversion
 ### End addressing ALL devices
 
@@ -521,7 +544,7 @@ sub monitor_linkhub {
         if ($returned ne 'ERROR') {
           if (! CRC($returned) ) {
             logmsg 1, "CRC error for $LinkDev:$name: $returned";
-            next;
+            next unless ($IgnoreCRCErrors);
           }
           $temperature = $returned;
           $voltage = $returned;
@@ -818,19 +841,19 @@ sub query_device {
         # Original ds1820 needs the bus pulled higher for longer for parasitic power
         # It can also loose the data after a Skip ROM so we address them inidividually here
         $returned = LinkData("\n");			# Clear any initial state
-        return 'ERROR' if (! defined($socket));
+        return 'ERROR' if (! CheckData($returned));
         $returned = LinkData("r\n");			# issue a 1-wire reset
-        return 'ERROR' if (! defined($socket));
+        return 'ERROR' if (! CheckData($returned));
         logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
         $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, ROM 0x55, address, convert T
-        return 'ERROR' if (! defined($socket));
+        return 'ERROR' if (! CheckData($returned));
         sleep 1;					# Give it time to convert T
       }
 
       $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BEFFFFFFFFFFFFFFFFFF
@@ -846,7 +869,7 @@ sub query_device {
       # oo CRC
 
       $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read command BE, 9 bytes FF
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       if ( (length($returned) != 38) || (! $returned =~ m/^55${address}BE[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
@@ -863,21 +886,21 @@ sub query_device {
       }
     } else {
       $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
       $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 to scratch pad
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       if ($returned ne "55${address}B800") {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
       }
   
       $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BE00FFFFFFFFFFFFFFFFFF
@@ -890,7 +913,7 @@ sub query_device {
       # ff: CRC
 
       $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 00
-      return 'ERROR' if (! defined($socket));
+      return 'ERROR' if (! CheckData($returned));
       if ( (length($returned) != 40) || (! $returned =~ m/^55${address}BE0000[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
@@ -1270,6 +1293,31 @@ sub LinkData {
     $returned = '';
   }
   return $returned;
+}
+
+sub CheckData {
+  my $returned = shift;
+  if (defined($returned)) {
+    if ($returned eq 'N') {
+      logmsg 2, "$main::LinkDev reported that it has no devices. Scheduling a search." unless ($LinkDevData{$main::LinkDev}{SearchNow});
+      $LinkDevData{$main::LinkDev}{SearchNow} = 1;
+      return 0;
+    }
+    if ($returned eq 'S') {
+      logmsg 2, "$main::LinkDev reported a short on the bus.";
+      return 0;
+    }
+    if ($returned eq 'E') {
+      logmsg 2, "$main::LinkDev reported an error processing the command.";
+      return 0;
+    }
+    if ($returned eq 'P') {
+      return 1;		# This should only be after a reset but any other time the returned data will be checked outside this subroutine anyway
+    }
+  } else {
+    return 0;
+  }
+  return 1;
 }
 
 sub CRC {
