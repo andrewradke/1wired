@@ -368,6 +368,9 @@ sub monitor_linkhub {
 
     $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
 
+    $returned = LinkData("\n");		# Discard any existing data
+    next if (! CheckData($returned));
+
 ### Begin search for devices on LinkHub
     if ( ($LinkDevData{$LinkDev}{SearchNow}) || (($DoSearch) || (($AutoSearch) && ($count == 1))) ) {
       $LinkDevData{$LinkDev}{ds1820} = 0;
@@ -375,8 +378,6 @@ sub monitor_linkhub {
       logmsg 3, "Searching for devices on $LinkDev";
       @addresses = ();
 
-      $returned = LinkData("\n");		# Clear any initial state
-      next if (! CheckData($returned));
       $returned = LinkData("f\n");		# request first device ID
       next if (! CheckData($returned));
 
@@ -494,16 +495,34 @@ sub monitor_linkhub {
 ### End search for devices on LinkHub
 
 ### Begin addressing ALL devices
-    $returned = LinkData("\n");			# Clear any initial state
-    next if (! CheckData($returned));
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+    ### BEGIN setting all 2438's to read input voltage rather than supply voltage
+    $returned = LinkData("bCC4E0071\n");	# byte mode, skip rom (address all devices), write scratch 4E, register 00, value 71
+    next if (! CheckData($returned));
+    sleep 0.01;					# wait 10ms
+    $returned = LinkData("r\n");		# issue a 1-wire reset
+    next if (! CheckData($returned));
+    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    $returned = LinkData("bCCBE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, skip rom (address all devices), read scratch BE, register 00
+    next if (! CheckData($returned));
+    sleep 0.01;					# wait 10ms
+    $returned = LinkData("r\n");		# issue a 1-wire reset
+    next if (! CheckData($returned));
+    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    $returned = LinkData("bCC4800\n");		# byte mode, skip rom (address all devices), copy scratch 48, register 00
+    next if (! CheckData($returned));
+    sleep 0.01;					# wait 10ms
+    $returned = LinkData("r\n");		# issue a 1-wire reset
+    next if (! CheckData($returned));
+    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    ### END setting all 2438's to read input voltage rather than supply voltage
+
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
     next if (! CheckData($returned));
     sleep 0.1;					# wait 100ms for temperature conversion
-    $returned = LinkData("\n");			# Clear any initial state
-    next if (! CheckData($returned));
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
     logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
@@ -679,7 +698,7 @@ sub monitor_linkth {
   $socket = LinkConnect($LinkDev) if (! $socket);
   next if (! $socket);				# Failed to connect
 
-  $socket->write("\n");				# Clear any initial state
+  $socket->write("\n");				# Discard any existing data
   sleep $SleepTime;
   ($tmp,$returned) = $socket->read(255);	# Discard any initial unrequested data
 
@@ -840,8 +859,6 @@ sub query_device {
       if ( $data{$address}{type} eq 'ds1820') {
         # Original ds1820 needs the bus pulled higher for longer for parasitic power
         # It can also loose the data after a Skip ROM so we address them inidividually here
-        $returned = LinkData("\n");			# Clear any initial state
-        return 'ERROR' if (! CheckData($returned));
         $returned = LinkData("r\n");			# issue a 1-wire reset
         return 'ERROR' if (! CheckData($returned));
         logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
@@ -850,8 +867,6 @@ sub query_device {
         sleep 1;					# Give it time to convert T
       }
 
-      $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
@@ -885,8 +900,6 @@ sub query_device {
         return 'ERROR';
       }
     } else {
-      $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
@@ -897,8 +910,6 @@ sub query_device {
         return 'ERROR';
       }
   
-      $returned = LinkData("\n");			# Clear any initial state
-      return 'ERROR' if (! CheckData($returned));
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
       logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
