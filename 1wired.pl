@@ -513,7 +513,7 @@ sub monitor_linkhub {
 ### Begin addressing ALL devices
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
-    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
 
     ### BEGIN setting all 2438's to read input voltage rather than supply voltage
     $returned = LinkData("bCC4E0071\n");	# byte mode, skip rom (address all devices), write scratch 4E, register 00, value 71
@@ -521,19 +521,19 @@ sub monitor_linkhub {
     sleep 0.01;					# wait 10ms
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
-    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCCBE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, skip rom (address all devices), read scratch BE, register 00
     next if (! CheckData($returned));
     sleep 0.01;					# wait 10ms
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
-    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCC4800\n");		# byte mode, skip rom (address all devices), copy scratch 48, register 00
     next if (! CheckData($returned));
     sleep 0.01;					# wait 10ms
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
-    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     ### END setting all 2438's to read input voltage rather than supply voltage
 
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
@@ -541,7 +541,7 @@ sub monitor_linkhub {
     sleep 0.1;					# wait 100ms for temperature conversion
     $returned = LinkData("r\n");		# issue a 1-wire reset
     next if (! CheckData($returned));
-    logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+    logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
     next if (! CheckData($returned));
     sleep 0.01;					# wait 10ms for voltage conversion
@@ -555,7 +555,7 @@ sub monitor_linkhub {
         if ($data{$address}{type} eq 'query') {
           $returned = LinkData("r\n");		# issue a 1-wire reset
           next if (! CheckData($returned));
-          logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+          logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
           $returned = LinkData("b55${address}B803\n");	# byte mode, ROM 0x55, address, recall page 03 to scratch
           next if (! CheckData($returned));
           if ($returned ne "55${address}B803") {
@@ -565,7 +565,7 @@ sub monitor_linkhub {
 
           $returned = LinkData("r\n");			# issue a 1-wire reset
           return 'ERROR' if (! CheckData($returned));
-          logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+          logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
 
           $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 03
           next if (! CheckData($returned));
@@ -624,10 +624,6 @@ sub monitor_linkhub {
         }
 
         if ($returned ne 'ERROR') {
-          if (! CRC($returned) ) {
-            logmsg 1, "CRC error for $LinkDev:$name: $returned";
-            next unless ($IgnoreCRCErrors);
-          }
           $temperature = $returned;
           $voltage = $returned;
           $temperature =~ s/^(....).*$/$1/;
@@ -930,7 +926,7 @@ sub query_device {
         # It can also loose the data after a Skip ROM so we address them inidividually here
         $returned = LinkData("r\n");			# issue a 1-wire reset
         return 'ERROR' if (! CheckData($returned));
-        logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+        logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
         $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, ROM 0x55, address, convert T
         return 'ERROR' if (! CheckData($returned));
         sleep 1;					# Give it time to convert T
@@ -938,7 +934,7 @@ sub query_device {
 
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
-      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+      logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BEFFFFFFFFFFFFFFFFFF
       # BExxyyiijjkkllmmnnoo
@@ -971,7 +967,7 @@ sub query_device {
     } else {
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
-      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+      logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
       $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 to scratch pad
       return 'ERROR' if (! CheckData($returned));
       if ($returned ne "55${address}B800") {
@@ -981,7 +977,7 @@ sub query_device {
   
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
-      logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+      logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
   
       # BE00FFFFFFFFFFFFFFFFFF
       # BE00xxyyzzaabbccddeeff
@@ -1002,7 +998,12 @@ sub query_device {
         logmsg 4, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
-      if ($returned =~ s/^55${address}BE00[0-9A-F]{2}//) {
+      if ($returned =~ s/^55${address}BE00//) {
+        if (! CRC($returned) ) {
+          logmsg 1, "ERROR: CRC failed for $LinkDev:$address: $returned";
+          return 'ERROR' unless ($IgnoreCRCErrors);
+        }
+        $returned =~ s/^..//;
         return $returned;
       } else {
         logmsg 2, "ERROR: returned data not valid for $address: $returned";
