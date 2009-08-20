@@ -139,6 +139,14 @@ $option = undef;
 $value = undef;
 ### End processing config file
 
+my %mstype = (
+        '00' => 'temperature',
+        '19' => 'humidity',
+        '1A' => 'voltage',
+        '1B' => 'light',
+        '1C' => 'current',
+    );
+
 if ($UseRRDs) {
   use RRDs;
   die "Can't write to RRD dir ($RRDsDir)" unless (-w $RRDsDir);
@@ -415,8 +423,12 @@ sub monitor_linkhub {
             }
           }
           $data{$returned}{linkdev} = $LinkDev;
-          $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
-          $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
+          $data{$returned}{name} = 'UNKNOWN' if (! defined($data{$returned}{name}));
+          $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
+          if ( $returned =~ m/^26/) {
+            # DS2438
+            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
             # DS18B20
             logmsg 3, "Setting device $returned type to 'tsense'";
@@ -469,8 +481,12 @@ sub monitor_linkhub {
             push (@addresses, $returned);
           }
           $data{$returned}{linkdev} = $LinkDev;
-          $data{$returned}{type} = 'voltage' if (! defined($data{$returned}{type}));
-          $data{$returned}{name} = '' if (! defined($data{$returned}{name}));
+          $data{$returned}{name} = 'UNKNOWN' if (! defined($data{$returned}{name}));
+          $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
+          if ( $returned =~ m/^26/) {
+            # DS2438
+            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
             logmsg 3, "Setting device $returned type to 'tsense'";
             $data{$returned}{type} = 'tsense';
@@ -536,13 +552,60 @@ sub monitor_linkhub {
       last if (! defined($socket));
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
       if ($data{$address}{linkdev} eq $LinkDev) {
+        if ($data{$address}{type} eq 'query') {
+          $returned = LinkData("r\n");		# issue a 1-wire reset
+          next if (! CheckData($returned));
+          logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+          $returned = LinkData("b55${address}B803\n");	# byte mode, ROM 0x55, address, recall page 03 to scratch
+          next if (! CheckData($returned));
+          if ($returned ne "55${address}B803") {
+            logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
+            next;
+          }
+
+          $returned = LinkData("r\n");			# issue a 1-wire reset
+          return 'ERROR' if (! CheckData($returned));
+          logmsg 1, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+          $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 03
+          next if (! CheckData($returned));
+          if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE03[A-Z0-9]{18}$/)) ) {
+            logmsg 3, "ERROR: Sent b55${address}BE03FFFFFFFFFFFFFFFFFF command; got: $returned";
+            next;
+          }
+          if ( $returned =~ m/^55${address}BE03F{18}$/ ) {
+            logmsg 4, "ERROR: Sent b55${address}BE03FFFFFFFFFFFFFFFFFF command; got: $returned";
+            next;
+          }
+          if ($returned =~ s/^55${address}BE03//) {
+            if (! CRC($returned) ) {
+              logmsg 1, "CRC error for $LinkDev:$address: $returned";
+              next unless ($IgnoreCRCErrors);
+            }
+            if ($returned =~ s/0{14}[0-9A-F]{2}$//) {
+              $data{$address}{type} = $returned;
+            } else {
+              logmsg 1, "ERROR: Data type for $LinkDev:$address not valid: $returned";
+              next;
+            }
+          } else {
+            logmsg 1, "ERROR: Data type for $LinkDev:$address not valid: $returned";
+            next;
+          }
+          
+          if ( defined($mstype{$returned}) ) {
+            $data{$address}{type} = $mstype{$returned};
+          } else {
+            $data{$address}{type} = 'unknown';
+          }
+          logmsg 2, "$address found to be type $returned (" . $data{$address}{type} . ")";
+        }
         if (! $data{$address}{type}) {
-          $data{$address}{type} = 'voltage';
+          logmsg 2, "$address is of an unknown type.";
+          $data{$address}{type} = 'unknown';
         }
         $type = $data{$address}{type};
-        if (! $data{$address}{name}) {
-          $data{$address}{name} = 'UNKNOWN';
-        }
+        $data{$address}{name} = 'UNKNOWN' if (! defined($data{$address}{name}));
         $name = $data{$address}{name};
 
         logmsg 5, "querying $name ($address) as $type";
@@ -741,8 +804,14 @@ sub monitor_linkth {
           $data{$address} = &share( {} );
         }
         $data{$address}{linkdev} = $LinkDev;
-        $data{$address}{type} = 'voltage' if (! defined($data{$address}{type}));
-        $data{$address}{name} = '' if (! defined($data{$address}{name}));
+        if (! defined($data{$address}{type})) {
+          if ( defined($mstype{$type}) ) {
+            $data{$address}{type} = $mstype{$type};
+          } else {
+            $data{$address}{type} = 'unknown';
+          }
+        }
+        $data{$address}{name} = 'UNKNOWN' if (! defined($data{$address}{name}));
         if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'tsense') ) {
           logmsg 3, "Setting device $address type to 'tsense'";
           $data{$address}{type} = 'tsense';
@@ -750,7 +819,7 @@ sub monitor_linkth {
         logmsg 4, "Found $address ($data{$address}{name}) on $LinkDev";
 
         $name = $data{$address}{name};
-        #$type = $data{$address}{type};
+        $type = $data{$address}{type};
 
         $voltage = 0 if ($voltage == 1023);		# 1023 inidicates a short or 0V
         $voltage = $voltage*0.01;			# each unit is 10mV
@@ -925,7 +994,7 @@ sub query_device {
 
       $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 00
       return 'ERROR' if (! CheckData($returned));
-      if ( (length($returned) != 40) || (! $returned =~ m/^55${address}BE0000[A-Z0-9]{18}$/) ) {
+      if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE00[A-Z0-9]{18}$/)) ) {
         logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
