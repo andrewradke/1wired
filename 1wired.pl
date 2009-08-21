@@ -562,7 +562,7 @@ sub monitor_linkhub {
       last if (! defined($socket));
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
       if ($data{$address}{linkdev} eq $LinkDev) {
-        if (! defined($data{$address}{mstype})) {
+        if ( ($address =~ m/^26/) && (! defined($data{$address}{mstype})) ) {
           $returned = LinkData("r\n");		# issue a 1-wire reset
           next if (! CheckData($returned));
           logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
@@ -581,24 +581,16 @@ sub monitor_linkhub {
           next if (! CheckData($returned));
           if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE03[A-Z0-9]{18}$/)) ) {
             logmsg 3, "ERROR: Sent b55${address}BE03FFFFFFFFFFFFFFFFFF command; got: $returned";
-            next;
-          }
-          if ( $returned =~ m/^55${address}BE03F{18}$/ ) {
+          } elsif ( $returned =~ m/^55${address}BE03F{18}$/ ) {
             logmsg 4, "ERROR: Sent b55${address}BE03FFFFFFFFFFFFFFFFFF command; got: $returned";
-            next;
-          }
-          if ($returned =~ s/^55${address}BE03//) {
+          } elsif ($returned =~ s/^55${address}BE03//) {
             if (! CRC($returned) ) {
               logmsg 1, "CRC error for $LinkDev:$address: $returned";
-              next unless ($IgnoreCRCErrors);
-            }
-            if (! ($returned =~ s/0{14}[0-9A-F]{2}$//) ) {
+            } elsif (! ($returned =~ s/[0-9A-F]{16}$//) ) {
               logmsg 1, "ERROR: Data type for $LinkDev:$address not valid: $returned";
-              next;
             }
           } else {
             logmsg 1, "ERROR: Data type for $LinkDev:$address not valid: $returned";
-            next;
           }
           
           if ( defined($mstype{$returned}) ) {
@@ -610,7 +602,10 @@ sub monitor_linkhub {
             $data{$address}{type} = $data{$address}{mstype};
             logmsg 2, "$address found to be type $returned (" . $data{$address}{mstype} . ")";
           }
-          if ( ($UpdateMSType) && ($data{$address}{type} ne $data{$address}{mstype})) {
+
+          logmsg 1, "$address type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}" if ($data{$address}{type} ne $data{$address}{mstype});
+
+          if ( ($UpdateMSType) && ($address =~ m/^26/) && ($data{$address}{type} ne $data{$address}{mstype})) {
             $tmp = '';
             foreach (keys(%mstype)) {
               $tmp = $_ if ($mstype{$_} eq $data{$address}{type});
@@ -753,8 +748,8 @@ sub monitor_linkhub {
           }
           if ($type eq 'depth15') {
             # 266.67 mV/psi; 0.5V ~= 0psi
-            #$voltage = ($voltage - 0.5) * 3.75;
-            $voltage = ($voltage - 0.43) * 3.891;
+            $voltage = ($voltage - 0.5) * 3.75;
+            #$voltage = ($voltage - 0.43) * 3.891;
             # 1.417psi/metre
             $voltage = $voltage / 1.417;
           }
@@ -1177,12 +1172,13 @@ sub value {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $linkdev);
+  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $linkdev);
   foreach $address (@addresses) {
     $name          = $data{$address}{name};
     if (($search eq lc($name)) || ($search eq lc($address))) {
       $temperature = $data{$address}{temperature};
       $type        = $data{$address}{type};
+      $mstype      = $data{$address}{mstype};
       $voltage     = $data{$address}{$type};
       $linkdev     = $data{$address}{linkdev};
       $minute      = $data{$address}{minute};
@@ -1208,12 +1204,13 @@ sub value {
       $minute      = 'NA' unless defined($minute);
       $FiveMinute  = 'NA' unless defined($FiveMinute);
       $raw         = 'NA' unless defined($raw);
+      $configtype  = $type;
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
         $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nlinkdev: $linkdev\n";
       } else {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev\nConfigType: $configtype\nMStype: $mstype\n";
       }
       return $output;
     }
