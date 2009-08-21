@@ -35,6 +35,7 @@ my $RRDsDir = '/var/1wired';
 my $AutoSearch = 1;
 my $ReSearchOnError = 1;
 my $IgnoreCRCErrors = 0;
+my $UpdateMSType = 0;
 
 my ($option, $value);
 open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
@@ -88,6 +89,12 @@ while (<CONFIG>) {
         $AutoSearch = 0 if ($value =~ m/^(0|false|no)$/i);
       } else {
         print STDERR "AutoSearch value defined in config file ($value) is not valid. Using default ($AutoSearch).\n";
+      }
+    } elsif ($option eq 'UpdateMSType') {
+      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+        $UpdateMSType = 1 if ($value =~ m/^(1|true|yes)$/i);
+      } else {
+        print STDERR "UpdateMSType value defined in config file ($value) is not valid. Using default ($UpdateMSType).\n";
       }
     } elsif ($option eq 'IgnoreCRCErrors') {
       if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
@@ -145,6 +152,9 @@ my %mstype = (
         '1A' => 'voltage',
         '1B' => 'light',
         '1C' => 'current',
+        '20' => 'pressure',
+        '21' => 'pressure150',
+        '22' => 'depth15',
     );
 
 if ($UseRRDs) {
@@ -552,11 +562,11 @@ sub monitor_linkhub {
       last if (! defined($socket));
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
       if ($data{$address}{linkdev} eq $LinkDev) {
-        if ($data{$address}{type} eq 'query') {
+        if (! defined($data{$address}{mstype})) {
           $returned = LinkData("r\n");		# issue a 1-wire reset
           next if (! CheckData($returned));
           logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
-          $returned = LinkData("b55${address}B803\n");	# byte mode, ROM 0x55, address, recall page 03 to scratch
+          $returned = LinkData("b55${address}B803\n");	# byte mode, match rom, address, recall page 03 to scratch
           next if (! CheckData($returned));
           if ($returned ne "55${address}B803") {
             logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
@@ -567,7 +577,7 @@ sub monitor_linkhub {
           return 'ERROR' if (! CheckData($returned));
           logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
 
-          $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 03
+          $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read scratch pad for memory page 03
           next if (! CheckData($returned));
           if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE03[A-Z0-9]{18}$/)) ) {
             logmsg 3, "ERROR: Sent b55${address}BE03FFFFFFFFFFFFFFFFFF command; got: $returned";
@@ -582,9 +592,7 @@ sub monitor_linkhub {
               logmsg 1, "CRC error for $LinkDev:$address: $returned";
               next unless ($IgnoreCRCErrors);
             }
-            if ($returned =~ s/0{14}[0-9A-F]{2}$//) {
-              $data{$address}{type} = $returned;
-            } else {
+            if (! ($returned =~ s/0{14}[0-9A-F]{2}$//) ) {
               logmsg 1, "ERROR: Data type for $LinkDev:$address not valid: $returned";
               next;
             }
@@ -594,11 +602,64 @@ sub monitor_linkhub {
           }
           
           if ( defined($mstype{$returned}) ) {
-            $data{$address}{type} = $mstype{$returned};
+            $data{$address}{mstype} = $mstype{$returned};
           } else {
-            $data{$address}{type} = 'unknown';
+            $data{$address}{mstype} = 'unknown';
           }
-          logmsg 2, "$address found to be type $returned (" . $data{$address}{type} . ")";
+          if ($data{$address}{type} eq 'query') {
+            $data{$address}{type} = $data{$address}{mstype};
+            logmsg 2, "$address found to be type $returned (" . $data{$address}{mstype} . ")";
+          }
+          if ( ($UpdateMSType) && ($data{$address}{type} ne $data{$address}{mstype})) {
+            $tmp = '';
+            foreach (keys(%mstype)) {
+              $tmp = $_ if ($mstype{$_} eq $data{$address}{type});
+            }
+            if ($tmp) {
+              logmsg 2, "Attempting to change $address type.";
+
+              $returned = LinkData("r\n");                # issue a 1-wire reset
+              next if (! CheckData($returned));
+              logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+              $returned = LinkData("b55${address}4E03${tmp}\n");        # byte mode, match rom, address, write scratch 4E, register 03, value $tmp
+              next if (! CheckData($returned));
+              sleep 0.01;                                 # wait 10ms
+              $returned = LinkData("r\n");                # issue a 1-wire reset
+              next if (! CheckData($returned));
+              logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+              $returned = LinkData("b55${address}BE03FF\n");        # byte mode, match rom, address, read scratch BE, register 03
+              next if (! CheckData($returned));
+              next if ($returned ne "55${address}BE03${tmp}");
+              sleep 0.01;                                 # wait 10ms
+              $returned = LinkData("r\n");                # issue a 1-wire reset
+              next if (! CheckData($returned));
+              logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+              $returned = LinkData("b55${address}4803\n");          # byte mode, match rom, address, copy scratch 48, register 03
+              next if (! CheckData($returned));
+              sleep 0.01;                                 # wait 10ms
+              $returned = LinkData("r\n");                # issue a 1-wire reset
+              next if (! CheckData($returned));
+              logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+              $returned = LinkData("b55${address}B803\n");  # byte mode, match rom, address, recall page 03 to scratch
+              next if (! CheckData($returned));
+              if ($returned ne "55${address}B803") {
+                logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
+                next;
+              }
+              sleep 0.01;                                 # wait 10ms
+              $returned = LinkData("r\n");                # issue a 1-wire reset
+              next if (! CheckData($returned));
+              logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
+
+              logmsg 1, "Changed $address type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
+
+            } else {
+              logmsg 1, "Unkown type $data{$address}{type}. Cannot update type for $address.";
+            }
+          }
         }
         if (! $data{$address}{type}) {
           logmsg 2, "$address is of an unknown type.";
@@ -927,7 +988,7 @@ sub query_device {
         $returned = LinkData("r\n");			# issue a 1-wire reset
         return 'ERROR' if (! CheckData($returned));
         logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
-        $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, ROM 0x55, address, convert T
+        $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, match rom, address, convert T
         return 'ERROR' if (! CheckData($returned));
         sleep 1;					# Give it time to convert T
       }
@@ -948,7 +1009,7 @@ sub query_device {
       # nn COUNT PER °C (10h)
       # oo CRC
 
-      $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read command BE, 9 bytes FF
+      $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read command BE, 9 bytes FF
       return 'ERROR' if (! CheckData($returned));
       if ( (length($returned) != 38) || (! $returned =~ m/^55${address}BE[A-Z0-9]{18}$/) ) {
         logmsg 3, "ERROR: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
@@ -968,7 +1029,7 @@ sub query_device {
       $returned = LinkData("r\n");			# issue a 1-wire reset
       return 'ERROR' if (! CheckData($returned));
       logmsg 3, "Reset on $LinkDev returned '$returned'" if ($returned ne 'P');
-      $returned = LinkData("b55${address}B800\n");	# byte mode, ROM 0x55, address, Recall Memory page 00 to scratch pad
+      $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
       return 'ERROR' if (! CheckData($returned));
       if ($returned ne "55${address}B800") {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
@@ -988,7 +1049,7 @@ sub query_device {
       # bb: MSB for voltage
       # ff: CRC
 
-      $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, ROM 0x55, address, read scratch pad for memory page 00
+      $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read scratch pad for memory page 00
       return 'ERROR' if (! CheckData($returned));
       if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE00[A-Z0-9]{18}$/)) ) {
         logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
