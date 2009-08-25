@@ -603,7 +603,7 @@ sub monitor_linkhub {
             logmsg 2, "$address found to be type $returned (" . $data{$address}{mstype} . ")";
           }
 
-          logmsg 1, "$address type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}" if ($data{$address}{type} ne $data{$address}{mstype});
+          logmsg 1, "$data{$address}{name} type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}" if ($data{$address}{type} ne $data{$address}{mstype});
 
           if ( ($UpdateMSType) && ($address =~ m/^26/) && ($data{$address}{type} ne $data{$address}{mstype})) {
             $tmp = '';
@@ -765,7 +765,7 @@ sub monitor_linkhub {
           if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
             $voltage = $temperature;
           }
-          $voltage = restrict_num_decimal_digits($voltage,2);
+          $voltage = restrict_num_decimal_digits($voltage,1);
           $data{$address}{$type} = $voltage;
           if (! defined($data{$address}{minute})) {
             $data{$address}{minute} = $voltage;
@@ -940,7 +940,7 @@ sub monitor_linkth {
         }
         $data{$address}{temperature} = $temperature;
 
-        $voltage = restrict_num_decimal_digits($voltage,2);
+        $voltage = restrict_num_decimal_digits($voltage,1);
         $data{$address}{$data{$address}{type}} = $voltage;
         if (! defined($data{$address}{minute})) {
           $data{$address}{minute} = $voltage;
