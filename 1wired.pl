@@ -278,6 +278,7 @@ if ($PidFile) {
 my $listener;
 
 my $client;
+threads->set_stack_size(16384);		# Reducing this from the default may reduce memory usage
 while (1) {	# This is needed to restart the listening loop after a sig hup
   while ($client = $server_sock->accept()) {
 
@@ -286,9 +287,17 @@ while (1) {	# This is needed to restart the listening loop after a sig hup
 
     logmsg 5, "Connection on socket $ListenPort";
     $listener = threads->new(\&report, $client);
-    $listener->detach;
     close ($client);			# This socket is handled by the new thread
     $client=undef;
+
+    ### Clean up any threads that have completed.
+    foreach my $thread (threads->list(threads::joinable)) {
+      if ($thread->tid && !threads::equal($thread, threads->self)) {
+        $thread->join;
+        $thread = undef;
+      }
+    }
+
   }
 }
 logmsg 1, "Closing socket $ListenPort";
@@ -304,7 +313,6 @@ if (! ($ListenPort =~ m/^\d+$/)) {
 ### clean up all threads
 foreach my $thread (threads->list) {
   if ($thread->tid && !threads::equal($thread, threads->self)) {
-    #$thread->exit();
     $thread->join;
   }
 }
@@ -344,12 +352,7 @@ sub report {
   close ($socket);
   $socket=undef;
   $select=undef;
-  # If the thread isn't detached then the following will cause a memory leak.
-  # If threads->exit isn't used then perl will not remove it from memory and
-  # that will also cause a memory leak.
-  # If this causes a Perl error then you may need to install libthreads-perl
-  # or upgrade to a version of perl > 5.8.8
-  threads->exit();
+  return(0);
 }
 
 sub monitor_linkhub {
