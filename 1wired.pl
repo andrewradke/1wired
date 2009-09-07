@@ -768,7 +768,11 @@ sub monitor_linkhub {
           if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
             $voltage = $temperature;
           }
-          $voltage = restrict_num_decimal_digits($voltage,1);
+          if ($type eq 'depth15') {
+            $voltage = restrict_num_decimal_digits($voltage,2);
+          } else {
+            $voltage = restrict_num_decimal_digits($voltage,1);
+          }
           $data{$address}{$type} = $voltage;
           if (! defined($data{$address}{minute})) {
             $data{$address}{minute} = $voltage;
