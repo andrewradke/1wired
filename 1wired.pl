@@ -689,10 +689,10 @@ sub monitor_linkhub {
             $data{$address}{time} = time();
           }
           if (! defined($data{$address}{FiveMinute})) {
-            $data{$address}{FiveMinute} = $voltage;
+            $data{$address}{FiveMinute} = $data{$address}{minute};
             $data{$address}{FiveTime} = time();
-          } elsif ( ($voltage > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
-            $data{$address}{FiveMinute} = $voltage;
+          } elsif ( ($data{$address}{minute} > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
+            $data{$address}{FiveMinute} = $data{$address}{minute};
             $data{$address}{FiveTime} = time();
           }
           $data{$address}{age} = time();
@@ -864,10 +864,10 @@ sub monitor_linkth {
           $data{$address}{time} = time();
         }
         if (! defined($data{$address}{FiveMinute})) {
-          $data{$address}{FiveMinute} = $voltage;
+          $data{$address}{FiveMinute} = $data{$address}{minute};
           $data{$address}{FiveTime} = time();
-        } elsif ( ($voltage > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
-          $data{$address}{FiveMinute} = $voltage;
+        } elsif ( ($data{$address}{minute} > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
+          $data{$address}{FiveMinute} = $data{$address}{minute};
           $data{$address}{FiveTime} = time();
         }
         $data{$address}{age} = time();
