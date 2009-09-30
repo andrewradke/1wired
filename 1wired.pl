@@ -438,7 +438,7 @@ sub monitor_linkhub {
             }
           }
           $data{$returned}{linkdev} = $LinkDev;
-          $data{$returned}{name} = 'UNKNOWN' if (! defined($data{$returned}{name}));
+          $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
           if ( $returned =~ m/^26/) {
             # DS2438
@@ -496,7 +496,7 @@ sub monitor_linkhub {
             push (@addresses, $returned);
           }
           $data{$returned}{linkdev} = $LinkDev;
-          $data{$returned}{name} = 'UNKNOWN' if (! defined($data{$returned}{name}));
+          $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
           if ( $returned =~ m/^26/) {
             # DS2438
@@ -572,11 +572,10 @@ sub monitor_linkhub {
           $data{$address}{type} = 'unknown';
         }
         $type = $data{$address}{type};
-        $data{$address}{name} = 'UNKNOWN' if (! defined($data{$address}{name}));
+        $data{$address}{name} = $address if (! defined($data{$address}{name}));
         $name = $data{$address}{name};
 
         logmsg 5, "querying $name ($address) as $type";
-        $name = $address if ($name eq 'UNKNOWN');
 
         $returned = query_device($socket,$select,$address,$LinkDev);
 
@@ -779,7 +778,7 @@ sub monitor_linkth {
             $data{$address}{type} = 'unknown';
           }
         }
-        $data{$address}{name} = 'UNKNOWN' if (! defined($data{$address}{name}));
+        $data{$address}{name} = $address if (! defined($data{$address}{name}));
         if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'tsense') ) {
           logmsg 3, "Setting device $address type to 'tsense'";
           $data{$address}{type} = 'tsense';
@@ -964,13 +963,13 @@ sub query_device {
       }
       if ($returned =~ s/^55${address}BE00//) {
         if (! CRC($returned) ) {
-          logmsg 1, "ERROR: CRC failed for $LinkDev:$address: $returned";
+          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
           return 'ERROR' unless ($IgnoreCRCErrors);
         }
         $returned =~ s/^..//;
         return $returned;
       } else {
-        logmsg 2, "ERROR: returned data not valid for $address: $returned";
+        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
         return 'ERROR';
       }
     }
@@ -1080,7 +1079,7 @@ sub value_all {
       }
       $temperature = 'NA' unless defined($temperature);
       $voltage     = 'NA' unless defined($voltage);
-      $name        = "* $address" if ($name eq 'UNKNOWN');
+      $name        = "* $address" if ($name eq $address);
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
@@ -1108,7 +1107,7 @@ sub value_all {
 
 sub value {
   my $output = '';
-  my $search = shift;
+  my $search = lc(shift);
 
   my @addresses;
   foreach my $LinkDev (keys(%addresses)) {
@@ -1202,7 +1201,7 @@ sub RecordRRDs {
 
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
-      next if ($name eq 'UNKNOWN');
+      next if ($name eq $address);
 
       $temperature = $data{$address}{temperature};
       $minute      = $data{$address}{minute};
