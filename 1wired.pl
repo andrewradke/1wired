@@ -1173,11 +1173,13 @@ sub helpmsg {
   my $output = '';
   $output .= << "EOF"
 Valid commands:
-list         : lists all devices including unkown and those not responding.
-listdb       : lists all devices in the database along with their type.
-value all    : returns the current values from all sensors.
-value <name> : return all data for sensor <name>.
-help         : this message.
+list          : lists all devices including unkown and those not responding.
+listdb        : lists all devices in the database along with their type.
+value all     : returns the current values from all sensors.
+value <name>  : return all data for sensor <name>.
+reload        : re-read device file and schedule a full search for devices.
+search <link> : search for devices on <link> (link can also be blank or 'all')
+help          : this message.
 EOF
 ;
   return $output;
