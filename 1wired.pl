@@ -278,7 +278,6 @@ if ($PidFile) {
 my $listener;
 
 my $client;
-threads->set_stack_size(16384);		# Reducing this from the default may reduce memory usage
 while (1) {	# This is needed to restart the listening loop after a sig hup
   while ($client = $server_sock->accept()) {
 
@@ -333,16 +332,19 @@ sub report {
   }
   if ($command) {
     $command =~ s/[\r\n]//g;
-    $command = lc($command);
-    if ($command eq 'list') {
+    if (lc($command) eq 'list') {
       $socket->send(list());
-    } elsif ($command eq 'listdb') {
+    } elsif (lc($command) eq 'listdb') {
       $socket->send(listdb());
-    } elsif ($command eq 'value all') {
+    } elsif (lc($command) eq 'value all') {
       $socket->send(value_all());
-    } elsif ($command =~ m/^value (.*)/) {
+    } elsif ($command =~ m/^value (.*)/i) {
       $socket->send(value($1));
-    } elsif ($command eq 'help') {
+    } elsif (lc($command) eq 'reload') {
+      $socket->send(reload());
+    } elsif ($command =~ m/^search(.*)/i) {
+      $socket->send(search($1));
+    } elsif (lc($command) eq 'help') {
       $socket->send(helpmsg());
     } else {
       $socket->send("UNKNOWN command: $command\n");
@@ -1011,6 +1013,41 @@ sub list {
   return $output;
 }
 
+sub reload {
+  my $output = '';
+  logmsg(1, "Re-reading device file.");
+  $output .= "Re-reading device file.\n";
+  ParseDeviceFile();
+  $output .= search();
+  return $output;
+}
+
+sub search {
+  my $LinkDev = shift;
+  $LinkDev = '' if (!(defined($LinkDev)));
+  $LinkDev =~ s/^ *//;
+  my $output = '';
+  if ( ($LinkDev eq 'all') || ($LinkDev eq '') ) {
+    logmsg 2, "Scheduling search for devices on all Links.";
+    $output .= "Scheduling search for devices on all Links.\n";
+    foreach $LinkDev (@LinkHubs) {
+      $LinkDevData{$LinkDev}{SearchNow} = 1;
+    }
+  } else {
+    if (defined($LinkDevData{$LinkDev})) {
+      logmsg 2, "Scheduling search for devices on $LinkDev.";
+      $output .= "Scheduling search for devices on $LinkDev.\n";
+      $LinkDevData{$LinkDev}{SearchNow} = 1;
+    } else {
+      logmsg 1, "'$LinkDev' is not a configured Link.";
+      $output .= "'$LinkDev' is not a configured Link.\n";
+    }
+  }
+  #logmsg 2, "Search for new devices will be done on the next pass.";
+  #$output .= "Search for new devices will be done on the next pass.\n";
+  return $output;
+}
+
 sub listdb {
   my $output = '';
   foreach (keys(%deviceDB)) {
@@ -1234,8 +1271,12 @@ sub monitor_agedata {
 
 sub ParseDeviceFile {
   my $errors = 0;
-  open(DEVICES,  "<$DeviceFile") or die "Can't open devices file ($DeviceFile): $!";
+  unless (open(DEVICES, '<', $DeviceFile)) {
+    logmsg 1, "Can't open devices file ($DeviceFile): $!";
+    return;
+  }
   while (<DEVICES>) {
+    chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
     if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9]+)\s*$/) {
@@ -1261,6 +1302,7 @@ sub ParseDeviceFile {
     logmsg 1, "Warning: No devices defined in $DeviceFile\n";
   }
 }
+
 
 sub LinkConnect {
   my $LinkDev = shift;
