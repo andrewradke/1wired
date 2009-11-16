@@ -340,6 +340,8 @@ sub report {
       $socket->send(value_all());
     } elsif ($command =~ m/^value (.*)/i) {
       $socket->send(value($1));
+    } elsif (lc($command) eq 'refresh') {
+      $socket->send(refresh());
     } elsif (lc($command) eq 'reload') {
       $socket->send(reload());
     } elsif ($command =~ m/^search(.*)/i) {
@@ -658,16 +660,22 @@ sub monitor_linkhub {
             $voltage = $voltage * 2;
           }
           if ($type eq 'depth15') {
-            # 266.67 mV/psi; 0.5V ~= 0psi
-            $voltage = ($voltage - 0.5) * 3.75;
-            #$voltage = ($voltage - 0.43) * 3.891;
-            # 1.417psi/metre
-            $voltage = $voltage / 1.417;
+            if ($voltage > 5) {
+              $voltage = undef;
+            } else {
+              # 266.67 mV/psi; 0.5V ~= 0psi
+              $voltage = ($voltage - 0.5) * 3.75;
+              # 1.417psi/metre
+              $voltage = $voltage / 1.417;
+            }
           }
           if ($type eq 'pressure150') {
-            $voltage = undef if ($voltage > 5);
-            # 26.67 mV/psi would be 150psi over 4V; therefore * 37.5
-            $voltage = ($voltage - 0.5) * 37.5;
+            if ($voltage > 5) {
+              $voltage = undef;
+            } else {
+              # 26.67 mV/psi; 0.5V ~= 0psi
+              $voltage = ($voltage - 0.5) * 37.5;
+            }
           }
           if ($type eq 'pressure') {
             # 25.7 mV/psi; 0.43V ~= 0psi
@@ -1012,12 +1020,18 @@ sub list {
   return $output;
 }
 
+sub refresh {
+  my $output = '';
+  $output .= reload();
+  $output .= search();
+  return $output;
+}
+
 sub reload {
   my $output = '';
   logmsg(1, "Re-reading device file.");
   $output .= "Re-reading device file.\n";
   ParseDeviceFile();
-  $output .= search();
   return $output;
 }
 
@@ -1176,8 +1190,9 @@ list          : lists all devices including unkown and those not responding.
 listdb        : lists all devices in the database along with their type.
 value all     : returns the current values from all sensors.
 value <name>  : return all data for sensor <name>.
-reload        : re-read device file and schedule a full search for devices.
-search <link> : search for devices on <link> (link can also be blank or 'all')
+refresh       : re-read device file and schedule a full search for devices.
+reload        : re-read device file
+search <link> : search for devices on <link> (<link> can also be blank or 'all')
 help          : this message.
 EOF
 ;
