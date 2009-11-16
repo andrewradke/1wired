@@ -660,22 +660,16 @@ sub monitor_linkhub {
             $voltage = $voltage * 2;
           }
           if ($type eq 'depth15') {
-            if ($voltage > 5) {
-              $voltage = undef;
-            } else {
-              # 266.67 mV/psi; 0.5V ~= 0psi
-              $voltage = ($voltage - 0.5) * 3.75;
-              # 1.417psi/metre
-              $voltage = $voltage / 1.417;
-            }
+            next if ($voltage > 5);
+            # 266.67 mV/psi; 0.5V ~= 0psi
+            $voltage = ($voltage - 0.5) * 3.75;
+            # 1.417psi/metre
+            $voltage = $voltage / 1.417;
           }
           if ($type eq 'pressure150') {
-            if ($voltage > 5) {
-              $voltage = undef;
-            } else {
-              # 26.67 mV/psi; 0.5V ~= 0psi
-              $voltage = ($voltage - 0.5) * 37.5;
-            }
+            next if ($voltage > 5);
+            # 26.67 mV/psi; 0.5V ~= 0psi
+            $voltage = ($voltage - 0.5) * 37.5;
           }
           if ($type eq 'pressure') {
             # 25.7 mV/psi; 0.43V ~= 0psi
@@ -990,6 +984,7 @@ sub query_device {
 sub restrict_num_decimal_digits {
   my $num=shift;
   my $digs_to_cut=shift;
+  return $num unless(defined($num));
   if ($num=~/\d+\.(\d){$digs_to_cut,}/) {
     $num=sprintf("%.".($digs_to_cut)."f", $num);
   }
