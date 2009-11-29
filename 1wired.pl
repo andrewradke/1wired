@@ -403,12 +403,24 @@ sub monitor_linkhub {
       logmsg 3, "Searching for devices on $LinkDev";
       @addresses = ();
 
+      unless (Reset()) {
+        logmsg 1, "Initial reset failed during search on $LinkDev. Sleeping 1 second before retrying.";
+        sleep 1;
+        next;
+      }
+
       $returned = LinkData("f\n");		# request first device ID
       next if (! CheckData($returned));
 
       $returned =~ s/[-+,]//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
-        logmsg 4, "No devices found on $LinkDev";
+        logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
+        sleep 1;
+        next;
+      }
+      if ($returned eq '') {			# no devices found so we'll start again and keep trying until something is found
+        logmsg 1, "No data returned on search of $LinkDev. Sleeping 1 second before retrying.";
+        sleep 1;
         next;
       }
 
@@ -635,7 +647,7 @@ sub monitor_linkhub {
           $voltage =~ s/^(..)(..)$/$2$1/;
           $voltage = hex $voltage;
           $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
-          $voltage = $voltage*0.01;             # each unit is 10mV
+          $voltage = $voltage*0.01;		# each unit is 10mV
           $data{$address}{raw} = $voltage;
           logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
           if ($type eq 'current') {
@@ -706,10 +718,12 @@ sub monitor_linkhub {
 ### End query of devices on LinkHub
 
     $count = 0 if ($count > 1);
-    #logmsg 5, "Finished loop for $LinkDev, closing socket.";
-    #$socket->close;
-    #$socket = undef;
-    sleep $SlowDown if ($SlowDown);	# ***** This is only to slow down the rate of queries
+    if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the 1wire master
+      logmsg 5, "Finished loop for $LinkDev, closing socket.";
+      $socket->close;
+      $socket = undef;
+      sleep $SlowDown;
+    }
   }
 }
 
@@ -1338,8 +1352,13 @@ sub LinkConnect {
         $socket->databits(8);
         $socket->parity('none');
         $socket->stopbits(1);
-        $socket->read_char_time(0);                   # don't wait for each character
-        $socket->read_const_time(100);                # 100 millisecond per unfulfilled "read" call
+        $socket->handshake("none");
+        $socket->read_char_time(0);			# don't wait for each character
+        $socket->read_const_time(100);			# 100 millisecond per unfulfilled "read" call
+        $socket->write_settings || undef $socket;	# activate settings
+      } else {
+        close ($socket);
+        $socket=undef;
       }
     }
     last if ($socket);
@@ -1352,7 +1371,11 @@ sub LinkConnect {
     logmsg 4, "Couldn't connect to $LinkDev $!, retrying... (attempt $retry)";
     sleep 1;
   }
-  logmsg 1, "Connected to $LinkDev" if ($socket);
+  if ($SlowDown) {
+    logmsg 5, "Connected to $LinkDev" if ($socket);
+  } else {
+    logmsg 1, "Connected to $LinkDev" if ($socket);
+  }
   return $socket;
 }
 
@@ -1504,28 +1527,28 @@ sub ChangeMSType {
 
       next if (! Reset());
 
-      $returned = LinkData("b55${address}4E03${type}\n");        # byte mode, match rom, address, write scratch 4E, register 03, value $type
+      $returned = LinkData("b55${address}4E03${type}\n");	# byte mode, match rom, address, write scratch 4E, register 03, value $type
       next if (! CheckData($returned));
-      sleep 0.01;                                 # wait 10ms
+      sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      $returned = LinkData("b55${address}BE03FF\n");        # byte mode, match rom, address, read scratch BE, register 03
+      $returned = LinkData("b55${address}BE03FF\n");		# byte mode, match rom, address, read scratch BE, register 03
       next if (! CheckData($returned));
       next if ($returned ne "55${address}BE03${type}");
-      sleep 0.01;                                 # wait 10ms
+      sleep 0.01;						# wait 10ms
       next if (! Reset());
-      $returned = LinkData("b55${address}4803\n");          # byte mode, match rom, address, copy scratch 48, register 03
+      $returned = LinkData("b55${address}4803\n");		# byte mode, match rom, address, copy scratch 48, register 03
       next if (! CheckData($returned));
-      sleep 0.01;                                 # wait 10ms
+      sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      $returned = LinkData("b55${address}B803\n");  # byte mode, match rom, address, recall page 03 to scratch
+      $returned = LinkData("b55${address}B803\n");		# byte mode, match rom, address, recall page 03 to scratch
       next if (! CheckData($returned));
       if ($returned ne "55${address}B803") {
         logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
         next;
       }
-      sleep 0.01;                                 # wait 10ms
+      sleep 0.01;						# wait 10ms
       next if (! Reset());
 
       logmsg 1, "Changed $data{$address}{name} type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
