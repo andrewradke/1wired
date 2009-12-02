@@ -741,14 +741,15 @@ sub monitor_linkth {
   my $address;
   my ($type, $name);
 
-  $socket = LinkConnect($LinkDev) if (! $socket);
-  next if (! $socket);				# Failed to connect
-
-  $socket->write("\n");				# Discard any existing data
-  sleep $SleepTime;
-  ($tmp,$returned) = $socket->read(255);	# Discard any initial unrequested data
-
   while (1) {
+    sleep 1;
+    $socket = LinkConnect($LinkDev) if (! $socket);
+    if (! $socket) {				# Failed to connect
+      logmsg 3, "Failed to connect to $LinkDev. Sleeping for 10 seconds before retrying";
+      sleep 10;					# Wait for 10 seconds before retrying
+      next;
+    }
+
     $socket->write("D");			# Request ALL LinkTH data
     sleep $SleepTime;
     ($tmp,$returned) = $socket->read(1023);	# Get reply
@@ -781,13 +782,14 @@ sub monitor_linkth {
         $tmp = 'EOD';				# Record that we have reached EOD
         last;
       }
-      @tmp = split(/,/, $_);			# $address $type,$temperatureC,$temperatureF,$???,$voltage[,$timestamp]
+      @tmp = split(/,/, $_);			# $address $type,$temperatureC,$temperatureF,$value,???[,$timestamp]
       if ($tmp[0] =~ s/ ([0-9A-F]{2})$//) {
         $address = $tmp[0];
         $type = $1;
         $temperature = $tmp[1];
-        $tmp[4] = 0 if (! $tmp[4]);
-        $voltage = $tmp[4];
+        $tmp[3] = 0 if (! $tmp[3]);
+        $voltage = $tmp[3];
+        $voltage = 0 unless ($voltage =~ m/^\d+$/);
 
         push (@addresses, $address);
         if (! defined($data{$address})) {
@@ -809,39 +811,9 @@ sub monitor_linkth {
         logmsg 4, "Found $address ($data{$address}{name}) on $LinkDev";
 
         $name = $data{$address}{name};
-        $type = $data{$address}{type};
+        $data{$address}{mstype} = $type;
+        $data{$address}{raw} = 'NA';
 
-        $voltage = 0 if ($voltage == 1023);		# 1023 inidicates a short or 0V
-        $voltage = $voltage*0.01;			# each unit is 10mV
-        $data{$address}{raw} = $voltage;
-        logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
-        if ($data{$address}{type} eq 'current') {
-          # convert voltage to current
-          # At 23 degrees C, it is linear from .2 VDC (1 amp.) to 3.78 VDC (20 amps.).
-          # The zero current reading is .09 VDC.
-          if ($voltage == 0.09) {
-            $voltage = 0;
-          } else {
-            $voltage = ( ($voltage-0.2) / ( (3.78-0.2) / 19) ) + 1;
-          }
-        }
-        if ($data{$address}{type} eq 'humidity') {
-          if ($type ne '19') {
-            logmsg (3,"$name ($LinkDev:$address) is configured for humidity but type reported as $type");
-            # convert voltage to humidity
-            # as per the formula from the Honeywell 3610-001 data sheet
-            $voltage = ($voltage - 0.958)/0.0307;
-          }
-        }
-        if ($data{$address}{type} eq 'light') {
-          if ($type ne '1B') {
-            logmsg (3,"$name ($LinkDev:$address) is configured for light but type reported as $type");
-          }
-          # if the reading is over 5V then it is actually < 0V and indicates darkness
-          $voltage = 0 if ($voltage > 5);
-          # double the voltage reading for light to give a range from 0-10
-          $voltage = $voltage * 2;
-        }
         if ($data{$address}{type} eq 'depth15') {
           # 266.67 mV/psi; 0.5V ~= 0psi
           #$voltage = ($voltage - 0.5) * 3.75;
@@ -1425,9 +1397,8 @@ sub LinkData {
 
 sub Reset {
   my $returned = LinkData("r\n");			# issue a 1-wire reset
-  return 0 if (! CheckData($returned));
-  if ($returned ne 'P') {
-    logmsg 3, "Reset on $main::LinkDev returned '$returned' (expected 'P')";
+  if ( (! CheckData($returned)) or ($returned eq '') ) {
+    logmsg 3, "Reset on $main::LinkDev returned '$returned' (expected 'P' or 'N')";
     return 0;
   }
   return 1;
@@ -1439,7 +1410,7 @@ sub CheckData {
     if ($returned eq 'N') {
       logmsg 2, "$main::LinkDev reported that it has no devices. Scheduling a search." unless ($LinkDevData{$main::LinkDev}{SearchNow});
       $LinkDevData{$main::LinkDev}{SearchNow} = 1;
-      return 0;
+      return 1;		# This means that there aren't any devices on the bus which is not a data error
     }
     if ($returned eq 'S') {
       logmsg 2, "$main::LinkDev reported a short on the bus.";
