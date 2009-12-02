@@ -764,6 +764,13 @@ sub monitor_linkth {
       ($tmp,$returned) = $socket->read(1023);	# Get reply
     }
     next if ($retry > 10);			# Too many retries, start again.
+
+    if ($returned =~ m/01 - No sensor present/) {
+      logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
+      sleep 1;
+      next;
+    }
+
     next if (! ($returned =~ m/EOD/));		# If there is no EOD then we haven't got all the devices, start again.
 
     $agedata{$LinkDev} = time();
