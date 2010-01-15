@@ -620,14 +620,14 @@ sub monitor_linkhub {
             $temperature =~ s/^(..)(..)$/$2$1/;
             $temperature = hex $temperature;
             $temperature = $temperature/16;
-            $temperature = restrict_num_decimal_digits($temperature,1);
+            $temperature -= 4096 if ($temperature > 4000);
           } else {
             $temperature =~ s/^(..)(..)$/$2$1/;
             $temperature = hex $temperature;
             $temperature = $temperature>>3;
             $temperature = $temperature*0.03125;
-            $temperature = restrict_num_decimal_digits($temperature,1);
           }
+          $temperature = restrict_num_decimal_digits($temperature,1);
 
           if (! defined($data{$address}{temperature})) {
             if ( $temperature == 85 ) {
