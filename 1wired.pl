@@ -385,15 +385,15 @@ sub monitor_linkhub {
     $count++;
     $agedata{$LinkDev} = time();
 
-    $socket = LinkConnect($LinkDev) if (! $socket);
-    if (! $socket) {			# Failed to connect
-      sleep 10;				# Wait for 10 seconds before retrying
+    $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
+    if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
+      sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
 
     $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
 
-    $returned = LinkData("\n");		# Discard any existing data
+    $returned = LinkData("\n");				# Discard any existing data
     next if (! CheckData($returned));
 
 ### Begin search for devices on LinkHub
@@ -743,18 +743,18 @@ sub monitor_linkth {
 
   while (1) {
     sleep 1;
-    $socket = LinkConnect($LinkDev) if (! $socket);
-    if (! $socket) {				# Failed to connect
+    $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
+    if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
       logmsg 3, "Failed to connect to $LinkDev. Sleeping for 10 seconds before retrying";
-      sleep 10;					# Wait for 10 seconds before retrying
+      sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
 
-    $socket->write("D");			# Request ALL LinkTH data
+    $socket->write("D");				# Request ALL LinkTH data
     sleep $SleepTime;
-    ($tmp,$returned) = $socket->read(1023);	# Get reply
+    ($tmp,$returned) = $socket->read(1023);		# Get reply
     my $retry = 0;
-    while ($tmp == 0 ) {			# No data in reply if $tmp == 0
+    while ($tmp == 0 ) {				# No data in reply if $tmp == 0
       $retry++;
       if ($retry > 10) {
         logmsg 1, "Didn't get any data from $LinkDev after 10 retries. Starting again.";
@@ -762,9 +762,9 @@ sub monitor_linkth {
       }
       logmsg 3, "Didn't get any data from $LinkDev, retrying... (attempt $retry)";
       sleep ($SleepTime + ($retry * 0.1));
-      ($tmp,$returned) = $socket->read(1023);	# Get reply
+      ($tmp,$returned) = $socket->read(1023);		# Get reply
     }
-    next if ($retry > 10);			# Too many retries, start again.
+    next if ($retry > 10);				# Too many retries, start again.
 
     if ($returned =~ m/01 - No sensor present/) {
       logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
@@ -772,17 +772,17 @@ sub monitor_linkth {
       next;
     }
 
-    next if (! ($returned =~ m/EOD/));		# If there is no EOD then we haven't got all the devices, start again.
+    next if (! ($returned =~ m/EOD/));			# If there is no EOD then we haven't got all the devices, start again.
 
     $agedata{$LinkDev} = time();
     @addresses = ();
 
     foreach (split(/\r?\n/, $returned)) {
       if ($_ eq 'EOD') {
-        $tmp = 'EOD';				# Record that we have reached EOD
+        $tmp = 'EOD';					# Record that we have reached EOD
         last;
       }
-      @tmp = split(/,/, $_);			# $address $type,$temperatureC,$temperatureF,$value,???[,$timestamp]
+      @tmp = split(/,/, $_);				# $address $type,$temperatureC,$temperatureF,$value,???[,$timestamp]
       if ($tmp[0] =~ s/ ([0-9A-F]{2})$//) {
         $address = $tmp[0];
         $type = $1;
@@ -1152,7 +1152,7 @@ sub value {
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nlinkdev: $linkdev\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev\nConfigType: $configtype\n";
       } else {
         $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev\nConfigType: $configtype\nMStype: $mstype\n";
       }
@@ -1324,6 +1324,7 @@ sub LinkConnect {
 		Timeout  => 5,
 		#Blocking => 0,
 		);
+      $socket=undef unless ($socket);
     } elsif ($main::LinkType eq 'LinkSerial') {
       $socket=Device::SerialPort->new($LinkDev);
       if ($socket) {
