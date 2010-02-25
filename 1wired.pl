@@ -11,6 +11,7 @@ use threads::shared;
 use IO::Select;
 use IO::Socket::INET;
 use Device::SerialPort;
+use Digest::CRC qw(crc16 crc8 crc16_hex crc8_hex);
 
 use Proc::Daemon;
 
@@ -434,7 +435,7 @@ sub monitor_linkhub {
       } elsif ($returned eq '0000000000000000') {
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
-      } elsif ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
+      } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
         if (! CRC($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -457,6 +458,11 @@ sub monitor_linkhub {
           if ( $returned =~ m/^26/) {
             # DS2438
             $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
+          if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
+            # DS2423
+            logmsg 3, "Setting device $returned type to 'ds2423'";
+            $data{$returned}{type} = 'ds2423';
           }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
             # DS18B20
@@ -485,7 +491,7 @@ sub monitor_linkhub {
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/[-+,]//gs;
-        if ($returned =~ s/(..)(..)(..)(..)(..)(..)(..)(..)/$8$7$6$5$4$3$2$1/) {
+        if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
           if ($returned eq '0000000000000000') {
             logmsg 1, "Device search on $LinkDev returned '$returned'";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -515,6 +521,11 @@ sub monitor_linkhub {
           if ( $returned =~ m/^26/) {
             # DS2438
             $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
+          if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
+            # DS2423
+            logmsg 3, "Setting device $returned type to 'ds2423'";
+            $data{$returned}{type} = 'ds2423';
           }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
             logmsg 3, "Setting device $returned type to 'tsense'";
@@ -607,93 +618,99 @@ sub monitor_linkhub {
         if ($returned ne 'ERROR') {
           $temperature = $returned;
           $voltage = $returned;
-          $temperature =~ s/^(....).*$/$1/;
-          $voltage =~ s/^....(....).*$/$1/;
-
-          #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
-          if ( $data{$address}{type} eq 'ds1820') {
-            $temperature =~ m/^(..)(..)$/;
-            $temperature = hex $1;
-            $temperature = $temperature - 256 if ( $2 eq 'FF' );
-            $temperature = $temperature/2;
-          } elsif ( $data{$address}{type} eq 'tsense') {
-            $temperature =~ s/^(..)(..)$/$2$1/;
-            $temperature = hex $temperature;
-            $temperature = $temperature/16;
-            $temperature -= 4096 if ($temperature > 4000);
+          if ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
+            $voltage =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputA{8}, 32x0bits, CRC16
+            $voltage = hex $voltage;
+            $data{$address}{temperature} = '';
           } else {
-            $temperature =~ s/^(..)(..)$/$2$1/;
-            $temperature = hex $temperature;
-            $temperature = $temperature>>3;
-            $temperature = $temperature*0.03125;
-          }
-          $temperature = restrict_num_decimal_digits($temperature,1);
+            $temperature =~ s/^(....).*$/$1/;
+            $voltage =~ s/^....(....).*$/$1/;
 
-          if (! defined($data{$address}{temperature})) {
-            if ( $temperature == 85 ) {
-              ### If the temperature is 85C it is probably a default value and should be ignored
-              logmsg 2, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+            #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+            if ( $data{$address}{type} eq 'ds1820') {
+              $temperature =~ m/^(..)(..)$/;
+              $temperature = hex $1;
+              $temperature = $temperature - 256 if ( $2 eq 'FF' );
+              $temperature = $temperature/2;
+            } elsif ( $data{$address}{type} eq 'tsense') {
+              $temperature =~ s/^(..)(..)$/$2$1/;
+              $temperature = hex $temperature;
+              $temperature = $temperature/16;
+              $temperature -= 4096 if ($temperature > 4000);
+            } else {
+              $temperature =~ s/^(..)(..)$/$2$1/;
+              $temperature = hex $temperature;
+              $temperature = $temperature>>3;
+              $temperature = $temperature*0.03125;
+            }
+            $temperature = restrict_num_decimal_digits($temperature,1);
+  
+            if (! defined($data{$address}{temperature})) {
+              if ( $temperature == 85 ) {
+                ### If the temperature is 85C it is probably a default value and should be ignored
+                logmsg 2, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+                next;
+              } else {
+                $data{$address}{temperature} = $temperature;
+              }
+            } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
+              ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
+              logmsg 2, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
               next;
-            } else {
-              $data{$address}{temperature} = $temperature;
             }
-          } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
-            ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
-            logmsg 2, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
-            next;
-          }
-          $data{$address}{temperature} = $temperature;
+            $data{$address}{temperature} = $temperature;
 
-          $voltage =~ s/^(..)(..)$/$2$1/;
-          $voltage = hex $voltage;
-          $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
-          $voltage = $voltage*0.01;		# each unit is 10mV
-          $data{$address}{raw} = $voltage;
-          logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
-          if ($type eq 'current') {
-            # convert voltage to current
-            # At 23 degrees C, it is linear from .2 VDC (1 amp.) to 3.78 VDC (20 amps.).
-            # The zero current reading is .09 VDC.
-            if ($voltage == 0.09) {
-              $voltage = 0;
-            } else {
-              $voltage = ( ($voltage-0.2) / ( (3.78-0.2) / 19) ) + 1;
+            $voltage =~ s/^(..)(..)$/$2$1/;
+            $voltage = hex $voltage;
+            $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
+            $voltage = $voltage*0.01;		# each unit is 10mV
+            $data{$address}{raw} = $voltage;
+            logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
+            if ($type eq 'current') {
+              # convert voltage to current
+              # At 23 degrees C, it is linear from .2 VDC (1 amp.) to 3.78 VDC (20 amps.).
+              # The zero current reading is .09 VDC.
+              if ($voltage == 0.09) {
+                $voltage = 0;
+              } else {
+                $voltage = ( ($voltage-0.2) / ( (3.78-0.2) / 19) ) + 1;
+              }
             }
-          }
-          if ($type eq 'humidity') {
-            # convert voltage to humidity
-            # as per the formula from the Honeywell 3610-001 data sheet
-            $voltage = ($voltage - 0.958)/0.0307;
-          }
-          if ($type eq 'light') {
-            # if the reading is over 5V then it is actually < 0V and indicates darkness
-            $voltage = 0 if ($voltage > 5);
-            # double the voltage reading for light to give a range from 0-10
-            $voltage = $voltage * 2;
-          }
-          if ($type eq 'depth15') {
-            next if ($voltage > 5);
-            # 266.67 mV/psi; 0.5V ~= 0psi
-            $voltage = ($voltage - 0.5) * 3.75;
-            # 1.417psi/metre
-            $voltage = $voltage / 1.417;
-          }
-          if ($type eq 'pressure150') {
-            next if ($voltage > 5);
-            # 26.67 mV/psi; 0.5V ~= 0psi
-            $voltage = ($voltage - 0.5) * 37.5;
-          }
-          if ($type eq 'pressure') {
-            # 25.7 mV/psi; 0.43V ~= 0psi
-            $voltage = ($voltage - 0.43) * 38.91;
-          }
-          if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-            $voltage = $temperature;
-          }
-          if ($type eq 'depth15') {
-            $voltage = restrict_num_decimal_digits($voltage,2);
-          } else {
-            $voltage = restrict_num_decimal_digits($voltage,1);
+            if ($type eq 'humidity') {
+              # convert voltage to humidity
+              # as per the formula from the Honeywell 3610-001 data sheet
+              $voltage = ($voltage - 0.958)/0.0307;
+            }
+            if ($type eq 'light') {
+              # if the reading is over 5V then it is actually < 0V and indicates darkness
+              $voltage = 0 if ($voltage > 5);
+              # double the voltage reading for light to give a range from 0-10
+              $voltage = $voltage * 2;
+            }
+            if ($type eq 'depth15') {
+              next if ($voltage > 5);
+              # 266.67 mV/psi; 0.5V ~= 0psi
+              $voltage = ($voltage - 0.5) * 3.75;
+              # 1.417psi/metre
+              $voltage = $voltage / 1.417;
+            }
+            if ($type eq 'pressure150') {
+              next if ($voltage > 5);
+              # 26.67 mV/psi; 0.5V ~= 0psi
+              $voltage = ($voltage - 0.5) * 37.5;
+            }
+            if ($type eq 'pressure') {
+              # 25.7 mV/psi; 0.43V ~= 0psi
+              $voltage = ($voltage - 0.43) * 38.91;
+            }
+            if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+              $voltage = $temperature;
+            }
+            if ($type eq 'depth15') {
+              $voltage = restrict_num_decimal_digits($voltage,2);
+            } else {
+              $voltage = restrict_num_decimal_digits($voltage,1);
+            }
           }
           $data{$address}{$type} = $voltage;
           if (! defined($data{$address}{minute})) {
@@ -926,6 +943,27 @@ sub query_device {
         logmsg 2, "ERROR: returned data not valid for $address: $returned";
         return 'ERROR';
       }
+    } elsif ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
+      my $page = 'C0';
+      $page = 'E0' if ($data{$address}{type} eq 'rain');
+      return 'ERROR' if (! Reset());
+      $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter, address 01C0h
+      return 'ERROR' if (! CheckData($returned));
+      if ( (length($returned) != 108) || (! ($returned =~ m/^55${address}A5${page}01[A-F0-9]{84}$/)) ) {
+        logmsg 3, "ERROR: Sent b55${address}A5${page}01 command; got: $returned";
+        return 'ERROR';
+      }
+      if ($returned =~ s/^55${address}A5${page}01//) {
+#        if (! CRC16($returned) ) {
+#          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
+#          return 'ERROR' unless ($IgnoreCRCErrors);
+#        }
+        return $returned;
+      } else {
+        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
+        return 'ERROR';
+      }
+
     } else {
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
@@ -934,9 +972,9 @@ sub query_device {
         logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
       }
-  
+
       return 'ERROR' if (! Reset());
-  
+
       # BE00FFFFFFFFFFFFFFFFFF
       # BE00xxyyzzaabbccddeeff
       # xx: status register
@@ -1240,9 +1278,11 @@ sub RecordRRDs {
           $data{$address}{rrdage} = $updatetime;
         }
       } else {
+        my $type = 'GAUGE';
+        $type = 'COUNTER' if ($data{$address}{type} eq 'rain');
         # Create RRD file
         logmsg (1, "Creating $rrdfile");
-        RRDs::create ($rrdfile, "--step=60", "DS:ds0:GAUGE:300:U:300", "DS:ds1:GAUGE:300:U:300",
+        RRDs::create ($rrdfile, "--step=60", "DS:ds0:${type}:300:U:300", "DS:ds1:${type}:300:U:300",
 	"RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
 	"RRA:MAX:0.5:1:4000", "RRA:MAX:0.5:30:800", "RRA:MAX:0.5:120:800", "RRA:MAX:0.5:1440:800",
 	"RRA:AVERAGE:0.5:1:4000", "RRA:AVERAGE:0.5:30:800", "RRA:AVERAGE:0.5:120:800", "RRA:AVERAGE:0.5:1440:800"
