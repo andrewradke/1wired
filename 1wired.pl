@@ -11,7 +11,7 @@ use threads::shared;
 use IO::Select;
 use IO::Socket::INET;
 use Device::SerialPort;
-use Digest::CRC qw(crc16 crc8 crc16_hex crc8_hex);
+#use Digest::CRC qw(crc16 crc8 crc16_hex crc8_hex);
 
 use Proc::Daemon;
 
@@ -440,6 +440,7 @@ sub monitor_linkhub {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         } else {
+          #next if ( $returned =~ m/^01/);
           if (! defined($data{$returned})) {
             $data{$returned} = &share( {} );
           }
@@ -455,6 +456,12 @@ sub monitor_linkhub {
           $data{$returned}{linkdev} = $LinkDev;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
+          if ( $returned =~ m/^01/) {
+            # DS2401
+            $data{$returned}{type} = 'ds2401' if ($data{$returned}{type} eq 'unknown');
+            $returned =~ m/^..(.{12})..$/;                # 48bit serial number
+            $data{$returned}{ds2401} = $1;
+          }
           if ( $returned =~ m/^26/) {
             # DS2438
             $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
@@ -502,7 +509,7 @@ sub monitor_linkhub {
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
-          next if ($8 eq '01');				# ignore LinkHubEs
+          #next if ( $returned =~ m/^01/);
           if (! defined($data{$returned})) {
             $data{$returned} = &share( {} );
           }
@@ -518,6 +525,12 @@ sub monitor_linkhub {
           $data{$returned}{linkdev} = $LinkDev;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
+          if ( $returned =~ m/^01/) {
+            # DS2401
+            $data{$returned}{type} = 'ds2401' if ($data{$returned}{type} eq 'unknown');
+            $returned =~ m/^..(.{12})..$/;                # 48bit serial number
+            $data{$returned}{ds2401} = $1;
+          }
           if ( $returned =~ m/^26/) {
             # DS2438
             $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
@@ -581,6 +594,7 @@ sub monitor_linkhub {
     foreach $address (@addresses) {
       last if (! defined($socket));
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
+      next if ($data{$address}{type} eq 'ds2401');
       if ($data{$address}{linkdev} eq $LinkDev) {
 
         # If this is a Multi Sensor then query it for it's type and update it if neccessary
@@ -1122,7 +1136,9 @@ sub value_all {
       $name        = "* $address" if ($name eq $address);
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
-      if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+      if ($type eq 'ds2401') {
+        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s\n", $name, $voltage, $linkdev;
+      } elsif ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
         $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s\n", $name, $temperature, $age, $linkdev;
       } else {
         $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s\n", $name, $temperature, $type, $voltage, $age, $linkdev;
@@ -1191,6 +1207,8 @@ sub value {
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
         $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev\nConfigType: $configtype\n";
+      } elsif ($type eq 'ds2401') {
+        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev\n";
       } else {
         $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev\nConfigType: $configtype\nMStype: $mstype\n";
       }
@@ -1430,6 +1448,7 @@ sub LinkData {
   if (defined($returned)) {
     $returned =~ s/[?\r\n\0]*$//;
     $returned =~ s/^\?*//;
+    $returned =~ s/\xff\xfa\x2c\x6a\x60\xff\xf0//;
   } else {
     $returned = '';
   }
