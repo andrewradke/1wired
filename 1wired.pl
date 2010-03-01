@@ -1149,12 +1149,17 @@ sub value_all {
       $name        = "* $address" if ($name eq $address);
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
-      if ($type eq 'ds2401') {
-        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s,%s\n", $name, $voltage, $linkdev, $channel;
-      } elsif ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s,%s\n", $name, $temperature, $age, $linkdev, $channel;
+      if ( defined($channel) ) {
+        $channel = ",$channel";
       } else {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s,%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
+        $channel = '';
+      }
+      if ($type eq 'ds2401') {
+        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s%s\n", $name, $voltage, $linkdev, $channel;
+      } elsif ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+        $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s%s\n", $name, $temperature, $age, $linkdev, $channel;
+      } else {
+        $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
       }
     }
   }
@@ -1219,12 +1224,17 @@ sub value {
       $configtype  = $type;
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
-      if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev,$channel\nConfigType: $configtype\n";
-      } elsif ($type eq 'ds2401') {
-        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev,$channel\n";
+      if ( defined($channel) ) {
+        $channel = ",$channel";
       } else {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev,$channel\nConfigType: $configtype\nMStype: $mstype\n";
+        $channel = '';
+      }
+      if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev$channel\nConfigType: $configtype\n";
+      } elsif ($type eq 'ds2401') {
+        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev$channel\n";
+      } else {
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev$channel\nConfigType: $configtype\nMStype: $mstype\n";
       }
       return $output;
     }
