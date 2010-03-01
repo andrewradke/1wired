@@ -405,7 +405,9 @@ sub monitor_linkhub {
       @addresses = ();
 
       unless (Reset()) {
-        logmsg 1, "Initial reset failed during search on $LinkDev. Sleeping 1 second before retrying.";
+        logmsg 1, "Initial reset failed during search on $LinkDev. Closing connection and sleeping 1 second before retrying.";
+        $socket->close;
+        $socket = undef;
         sleep 1;
         next;
       }
@@ -413,7 +415,13 @@ sub monitor_linkhub {
       $returned = LinkData("f\n");		# request first device ID
       next if (! CheckData($returned));
 
-      $returned =~ s/[-+,]//gs;
+      unless ($returned =~ m/,[1-5]$/) {
+        logmsg 3, "Turning channel reporting on on $LinkDev and restarting search.";
+        $returned = LinkData('\$');		# Toggles channel reporting on
+	next;
+      }
+
+      $returned =~ s/^[-+,]*//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
         logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
         sleep 1;
@@ -429,13 +437,14 @@ sub monitor_linkhub {
       $DoSearch = 0 if (! $AutoSearch);
       $LinkDevData{$LinkDev}{SearchNow} = 0;
 
-      if ($returned =~ m/^.$/) {			# Error but we'll keep searching in case there are more devices
+      if ($returned =~ m/^.$/) {		# Error but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned eq '0000000000000000') {
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
-      } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
+      } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..),([1-5])$/$8$7$6$5$4$3$2$1/) {
+        my $channel = $9;
         if (! CRC($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -454,6 +463,7 @@ sub monitor_linkhub {
             }
           }
           $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{channel} = $channel;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
           if ( $returned =~ m/^01/) {
@@ -497,8 +507,9 @@ sub monitor_linkhub {
           next;
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
-        $returned =~ s/[-+,]//gs;
-        if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
+        $returned =~ s/^[-+,]*//gs;
+        if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..),([1-5])$/$8$7$6$5$4$3$2$1/) {
+          my $channel = $9;
           if ($returned eq '0000000000000000') {
             logmsg 1, "Device search on $LinkDev returned '$returned'";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -523,6 +534,7 @@ sub monitor_linkhub {
             push (@addresses, $returned);
           }
           $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{channel} = $channel;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
           if ( $returned =~ m/^01/) {
@@ -1118,7 +1130,7 @@ sub value_all {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $voltage, $age, $linkdev);
+  my ($address, $name, $temperature, $type, $voltage, $age, $linkdev, $channel);
   foreach $address (@addresses) {
     eval {
       $name        = $data{$address}{name};
@@ -1126,6 +1138,7 @@ sub value_all {
       $type        = $data{$address}{type};
       $voltage     = $data{$address}{$type};
       $linkdev     = $data{$address}{linkdev};
+      $channel     = $data{$address}{channel};
       if (defined($data{$address}{age})) {
         $age       = time - $data{$address}{age};
       } else {
@@ -1137,11 +1150,11 @@ sub value_all {
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ($type eq 'ds2401') {
-        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s\n", $name, $voltage, $linkdev;
+        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s,%s\n", $name, $voltage, $linkdev, $channel;
       } elsif ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s\n", $name, $temperature, $age, $linkdev;
+        $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s,%s\n", $name, $temperature, $age, $linkdev, $channel;
       } else {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s\n", $name, $temperature, $type, $voltage, $age, $linkdev;
+        $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s,%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
       }
     }
   }
@@ -1170,7 +1183,7 @@ sub value {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $linkdev);
+  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $linkdev, $channel);
   foreach $address (@addresses) {
     $name          = $data{$address}{name};
     if (($search eq lc($name)) || ($search eq lc($address))) {
@@ -1179,6 +1192,7 @@ sub value {
       $mstype      = $data{$address}{mstype};
       $voltage     = $data{$address}{$type};
       $linkdev     = $data{$address}{linkdev};
+      $channel     = $data{$address}{channel};
       $minute      = $data{$address}{minute};
       $FiveMinute  = $data{$address}{FiveMinute};
       if ($data{$address}{time}) {
@@ -1206,11 +1220,11 @@ sub value {
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev\nConfigType: $configtype\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev,$channel\nConfigType: $configtype\n";
       } elsif ($type eq 'ds2401') {
-        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev,$channel\n";
       } else {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev\nConfigType: $configtype\nMStype: $mstype\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev,$channel\nConfigType: $configtype\nMStype: $mstype\n";
       }
       return $output;
     }
@@ -1382,7 +1396,10 @@ sub LinkConnect {
 		Timeout  => 5,
 		#Blocking => 0,
 		);
-      $socket=undef unless ($socket);
+      unless ($socket) {
+        close ($socket);
+        $socket=undef;
+      }
     } elsif ($main::LinkType eq 'LinkSerial') {
       $socket=Device::SerialPort->new($LinkDev);
       if ($socket) {
