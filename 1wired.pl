@@ -1407,7 +1407,6 @@ sub LinkConnect {
 		#Blocking => 0,
 		);
       unless ($socket) {
-        close ($socket);
         $socket=undef;
       }
     } elsif ($main::LinkType eq 'LinkSerial') {
