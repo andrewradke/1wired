@@ -415,10 +415,22 @@ sub monitor_linkhub {
       $returned = LinkData("f\n");		# request first device ID
       next if (! CheckData($returned));
 
-      unless ($returned =~ m/,[1-5]$/) {
-        logmsg 3, "Turning channel reporting on on $LinkDev and restarting search.";
-        $returned = LinkData('\$');		# Toggles channel reporting on
-	next;
+      unless ( defined($LinkDevData{$LinkDev}{channels}) ) {
+        if ( $returned =~ m/,[1-5]$/ ) {
+          $LinkDevData{$LinkDev}{channels} = 1;
+          logmsg 1, "Channel reporting supported on $LinkDev.";
+        } else {
+          logmsg 1, "Checking for channel reporting support on $LinkDev";
+          $returned = LinkData('\$');		# Toggles channel reporting on
+          $returned = LinkData("f\n");		# request first device ID again
+          if ($returned =~ m/,[1-5]$/) {
+            $LinkDevData{$LinkDev}{channels} = 1;
+            logmsg 1, "Channel reporting enabled on $LinkDev.";
+          } else {
+            $LinkDevData{$LinkDev}{channels} = 0;
+            logmsg 1, "Channel reporting NOT supported on $LinkDev.";
+          }
+        }
       }
 
       $returned =~ s/^[-+,]*//gs;
@@ -434,17 +446,20 @@ sub monitor_linkhub {
       }
 
       # We have found at least one device so we can turn off the need to do more searches
-      $DoSearch = 0 if (! $AutoSearch);
-      $LinkDevData{$LinkDev}{SearchNow} = 0;
-
+      $DoSearch = 0 unless ($AutoSearch);
+      $LinkDevData{$LinkDev}{SearchNow} = 0;	# Default to not needing a new search unless an error is found
+      my $channel = '';
+      if ($LinkDevData{$LinkDev}{channels}) {
+        $returned =~ s/,([1-5])$//;
+        $channel = $1;
+      }
       if ($returned =~ m/^.$/) {		# Error but we'll keep searching in case there are more devices
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned eq '0000000000000000') {
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
-      } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..),([1-5])$/$8$7$6$5$4$3$2$1/) {
-        my $channel = $9;
+      } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
         if (! CRC($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -508,8 +523,12 @@ sub monitor_linkhub {
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/^[-+,]*//gs;
-        if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..),([1-5])$/$8$7$6$5$4$3$2$1/) {
-          my $channel = $9;
+        my $channel = '';
+        if ($LinkDevData{$LinkDev}{channels}) {
+          $returned =~ s/,([1-5])$//;
+          $channel = $1;
+        }
+        if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
           if ($returned eq '0000000000000000') {
             logmsg 1, "Device search on $LinkDev returned '$returned'";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -1150,7 +1169,7 @@ sub value_all {
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( defined($channel) ) {
-        $channel = ",$channel";
+        $channel = ",$channel" unless ($channel eq '');
       } else {
         $channel = '';
       }
@@ -1225,7 +1244,7 @@ sub value {
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       if ( defined($channel) ) {
-        $channel = ",$channel";
+        $channel = ",$channel" unless ($channel eq '');
       } else {
         $channel = '';
       }
