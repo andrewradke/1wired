@@ -287,7 +287,7 @@ while (1) {	# This is needed to restart the listening loop after a sig hup
 
     logmsg 5, "Connection on socket $ListenPort";
     $listener = threads->new(\&report, $client);
-    close ($client);			# This socket is handled by the new thread
+    close ($client) if (defined($client));	# This socket is handled by the new thread
     $client=undef;
 
     ### Clean up any threads that have completed.
@@ -354,7 +354,7 @@ sub report {
       $socket->send(helpmsg());
     }
   }
-  close ($socket);
+  close ($socket) if (defined($socket));
   $socket=undef;
   $select=undef;
   return(0);
@@ -406,7 +406,7 @@ sub monitor_linkhub {
 
       unless (Reset()) {
         logmsg 1, "Initial reset failed during search on $LinkDev. Closing connection and sleeping 1 second before retrying.";
-        $socket->close;
+        close ($socket) if (defined($socket));
         $socket = undef;
         sleep 1;
         next;
@@ -782,7 +782,7 @@ sub monitor_linkhub {
     $count = 0 if ($count > 1);
     if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the 1wire master
       logmsg 5, "Finished loop for $LinkDev, closing socket.";
-      $socket->close;
+      close ($socket) if (defined($socket));
       $socket = undef;
       sleep $SlowDown;
     }
@@ -1440,7 +1440,7 @@ sub LinkConnect {
         $socket->read_const_time(100);			# 100 millisecond per unfulfilled "read" call
         $socket->write_settings || undef $socket;	# activate settings
       } else {
-        close ($socket);
+        close ($socket) if (defined($socket));
         $socket=undef;
       }
     }
@@ -1474,7 +1474,7 @@ sub LinkData {
         $main::socket->recv($returned,128);
       } else {
         logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
-        $main::socket->close;
+        close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
       }
     }
@@ -1485,7 +1485,7 @@ sub LinkData {
       ($tmp,$returned) = $main::socket->read(1023);
       if (!defined($returned)) {
         logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
-        $main::socket->close;
+        close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
       }
     }
