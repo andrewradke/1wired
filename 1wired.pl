@@ -693,14 +693,14 @@ sub monitor_linkhub {
             if (! defined($data{$address}{temperature})) {
               if ( $temperature == 85 ) {
                 ### If the temperature is 85C it is probably a default value and should be ignored
-                logmsg 2, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+                logmsg 1, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
                 next;
               } else {
                 $data{$address}{temperature} = $temperature;
               }
             } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
-              logmsg 2, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
+              logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
               next;
             }
             $data{$address}{temperature} = $temperature;
@@ -900,14 +900,14 @@ sub monitor_linkth {
         if (! defined($data{$address}{temperature})) {
           if ( $temperature == 85 ) {
             ### If the temperature is 85C it is probably a default value and should be ignored
-            logmsg 2, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+            logmsg 1, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
             next;
           } else {
             $data{$address}{temperature} = $temperature;
           }
         } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
           ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
-          logmsg 2, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
+          logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
           next;
         }
         $data{$address}{temperature} = $temperature;
@@ -1289,7 +1289,7 @@ EOF
 
 sub RecordRRDs {
   my @addresses;
-  my ($address, $name, $temperature, $minute, $age, $rrdage);
+  my ($address, $name, $type, $temperature, $minute, $age, $rrdage);
   my ($rrdfile, $rrderror, $updatetime);
   while(1) {
     @addresses = ();
@@ -1304,6 +1304,13 @@ sub RecordRRDs {
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
       next if ($name eq $address);
+
+      $type        = $data{$address}{type};
+      next if ($type eq 'ds2401');
+
+      $type        =~ s/^pressure[0-9]+$/pressure/;
+      $type        =~ s/^depth[0-9]+$/depth/;
+      $type        = 'temperature' if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
 
       $temperature = $data{$address}{temperature};
       $minute      = $data{$address}{minute};
@@ -1331,7 +1338,10 @@ sub RecordRRDs {
       $rrdfile = "$RRDsDir/" . lc($name) . ".rrd";
 
       if (-w $rrdfile) {
-        RRDs::update ($rrdfile, "$updatetime:$temperature:$minute");
+        my $rrdcmd = "$updatetime:$temperature:$minute";
+        $rrdcmd = "$updatetime:$minute"		if ($type eq 'rain');
+        $rrdcmd = "$updatetime:$temperature"	if ($type eq 'temperature');
+        RRDs::update ($rrdfile, "$rrdcmd");
         $rrderror=RRDs::error;
         if ($rrderror) {
           logmsg 1, "ERROR while updating RRD file for $name: $rrderror";
@@ -1339,15 +1349,24 @@ sub RecordRRDs {
           $data{$address}{rrdage} = $updatetime;
         }
       } else {
-        my $type = 'GAUGE';
-        $type = 'COUNTER' if ($data{$address}{type} eq 'rain');
+        my $rrdtype = 'GAUGE';
+        $rrdtype = 'COUNTER' if ($type eq 'rain');
+
+        my @rrdcmd = ($rrdfile, "--step=60");
+
+        @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300")	unless ($type eq 'rain');
+        @rrdcmd = (@rrdcmd, "DS:${type}:${rrdtype}:300:U:300")	unless ($type eq 'temperature');
+
+        @rrdcmd = (@rrdcmd, 
+          "RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
+          "RRA:MAX:0.5:1:4000", "RRA:MAX:0.5:30:800", "RRA:MAX:0.5:120:800", "RRA:MAX:0.5:1440:800",
+          "RRA:AVERAGE:0.5:1:4000", "RRA:AVERAGE:0.5:30:800", "RRA:AVERAGE:0.5:120:800", "RRA:AVERAGE:0.5:1440:800"
+	);
+
         # Create RRD file
         logmsg (1, "Creating $rrdfile");
-        RRDs::create ($rrdfile, "--step=60", "DS:ds0:${type}:300:U:300", "DS:ds1:${type}:300:U:300",
-	"RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
-	"RRA:MAX:0.5:1:4000", "RRA:MAX:0.5:30:800", "RRA:MAX:0.5:120:800", "RRA:MAX:0.5:1440:800",
-	"RRA:AVERAGE:0.5:1:4000", "RRA:AVERAGE:0.5:30:800", "RRA:AVERAGE:0.5:120:800", "RRA:AVERAGE:0.5:1440:800"
-	);
+        RRDs::create (@rrdcmd);
+
         $rrderror=RRDs::error;
         logmsg (1, "ERROR while creating/updating RRD file for $name: $rrderror") if $rrderror;
       }
