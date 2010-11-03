@@ -1314,7 +1314,7 @@ sub RecordRRDs {
 
       $temperature = $data{$address}{temperature};
       $minute      = $data{$address}{minute};
-      $minute      = $data{$address}{voltage} if ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') );
+      $minute      = $data{$address}{$type} if ( ($type eq 'ds2423') or ($type eq 'rain') );
 
       $temperature = 'U' unless defined($temperature);
       $minute      = 'U' unless defined($minute);
