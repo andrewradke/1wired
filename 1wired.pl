@@ -667,6 +667,13 @@ sub monitor_linkhub {
             $voltage =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputA{8}, 32x0bits, CRC16
             $voltage = hex $voltage;
             $data{$address}{temperature} = '';
+            if ( ($data{$address}{type} eq 'rain') and (defined($data{$address}{rain})) and ($voltage > ($data{$address}{rain} + 10)) and ((time - $data{$address}{age}) < 60) ) {
+              ### If the counter is more than 10 above the previous recorded value it is probably not correct
+              ### If the current data is more than 60s old record it anyway
+              ### The counter can go backwards if it wraps so only check for large increases
+              logmsg 1, "(query) Spurious reading ($voltage) for $address: keeping previous data ($data{$address}{rain})";
+              next;
+            }
           } else {
             $temperature =~ s/^(....).*$/$1/;
             $voltage =~ s/^....(....).*$/$1/;
@@ -698,8 +705,9 @@ sub monitor_linkhub {
               } else {
                 $data{$address}{temperature} = $temperature;
               }
-            } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
+            } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
+              ### If the current data is more than 60s old record it anyway
               logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
               next;
             }
@@ -905,8 +913,9 @@ sub monitor_linkth {
           } else {
             $data{$address}{temperature} = $temperature;
           }
-        } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) ) {
+        } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
           ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
+          ### If the current data is more than 60s old record it anyway
           logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
           next;
         }
