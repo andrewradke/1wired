@@ -414,6 +414,11 @@ sub monitor_linkhub {
 
       $returned = LinkData("f\n");		# request first device ID
       next if (! CheckData($returned));
+      if ($returned eq '') {			# no data returned so we'll start again and keep trying
+        logmsg 1, "No data returned on search of $LinkDev. Sleeping 1 second before retrying.";
+        sleep 1;
+        next;
+      }
 
       unless ( defined($LinkDevData{$LinkDev}{channels}) ) {
         if ( $returned =~ m/,[1-5]$/ ) {
@@ -421,8 +426,11 @@ sub monitor_linkhub {
           logmsg 1, "Channel reporting supported on $LinkDev.";
         } else {
           logmsg 1, "Checking for channel reporting support on $LinkDev";
-          $returned = LinkData('\$');		# Toggles channel reporting on
+          $returned = LinkData('\$');		# Toggles channel reporting
+          next if (! CheckData($returned));
           $returned = LinkData("f\n");		# request first device ID again
+          next if (! CheckData($returned));
+
           if ($returned =~ m/,[1-5]$/) {
             $LinkDevData{$LinkDev}{channels} = 1;
             logmsg 1, "Channel reporting enabled on $LinkDev.";
@@ -436,11 +444,6 @@ sub monitor_linkhub {
       $returned =~ s/^[-+,]*//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
         logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
-        sleep 1;
-        next;
-      }
-      if ($returned eq '') {			# no devices found so we'll start again and keep trying until something is found
-        logmsg 1, "No data returned on search of $LinkDev. Sleeping 1 second before retrying.";
         sleep 1;
         next;
       }
