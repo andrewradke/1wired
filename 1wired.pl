@@ -630,23 +630,23 @@ sub monitor_linkhub {
       next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
       next if ($data{$address}{type} eq 'ds2401');
       if ($data{$address}{linkdev} eq $LinkDev) {
+        $data{$address}{name} = $address if (! defined($data{$address}{name}));
+        $name = $data{$address}{name};
 
         # If this is a Multi Sensor then query it for it's type and update it if neccessary
         if ( ($address =~ m/^26/) && (! defined($data{$address}{mstype})) ) {
           QueryMSType($address);
           if ($data{$address}{type} ne $data{$address}{mstype}) {
-            logmsg 1, "$data{$address}{name} type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}";
+            logmsg 1, "$name type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}";
             ChangeMSType($address) if ($UpdateMSType);
           }
         }
 
         if (! $data{$address}{type}) {
-          logmsg 2, "$address is of an unknown type.";
+          logmsg 2, "$name is of an unknown type.";
           $data{$address}{type} = 'unknown';
         }
         $type = $data{$address}{type};
-        $data{$address}{name} = $address if (! defined($data{$address}{name}));
-        $name = $data{$address}{name};
 
         logmsg 5, "querying $name ($address) as $type";
 
@@ -674,7 +674,7 @@ sub monitor_linkhub {
               ### If the counter is more than 10 above the previous recorded value it is probably not correct
               ### If the current data is more than 60s old record it anyway
               ### The counter can go backwards if it wraps so only check for large increases
-              logmsg 1, "(query) Spurious reading ($voltage) for $address: keeping previous data ($data{$address}{rain})";
+              logmsg 1, "(query) Spurious reading ($voltage) for $name: keeping previous data ($data{$address}{rain})";
               next;
             }
           } else {
@@ -703,7 +703,7 @@ sub monitor_linkhub {
             if (! defined($data{$address}{temperature})) {
               if ( $temperature == 85 ) {
                 ### If the temperature is 85C it is probably a default value and should be ignored
-                logmsg 1, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+                logmsg 1, "(query) Initial temperature ($temperature) for $name is probably not valid (85C is a default): discarding readings.";
                 next;
               } else {
                 $data{$address}{temperature} = $temperature;
@@ -711,7 +711,7 @@ sub monitor_linkhub {
             } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
               ### If the current data is more than 60s old record it anyway
-              logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
+              logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
               next;
             }
             $data{$address}{temperature} = $temperature;
@@ -876,14 +876,16 @@ sub monitor_linkth {
             $data{$address}{type} = 'unknown';
           }
         }
+
         $data{$address}{name} = $address if (! defined($data{$address}{name}));
+        $name = $data{$address}{name};
+
         if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'tsense') ) {
-          logmsg 3, "Setting device $address type to 'tsense'";
+          logmsg 3, "Setting device $name type to 'tsense'";
           $data{$address}{type} = 'tsense';
         }
-        logmsg 4, "Found $address ($data{$address}{name}) on $LinkDev";
+        logmsg 4, "Found $address ($name) on $LinkDev";
 
-        $name = $data{$address}{name};
         $data{$address}{mstype} = $type;
         $data{$address}{raw} = 'NA';
 
@@ -911,7 +913,7 @@ sub monitor_linkth {
         if (! defined($data{$address}{temperature})) {
           if ( $temperature == 85 ) {
             ### If the temperature is 85C it is probably a default value and should be ignored
-            logmsg 1, "(query) Initial temperature ($temperature) for $address is probably not valid (85C is a default): discarding readings.";
+            logmsg 1, "(query) Initial temperature ($temperature) for $name is probably not valid (85C is a default): discarding readings.";
             next;
           } else {
             $data{$address}{temperature} = $temperature;
@@ -919,7 +921,7 @@ sub monitor_linkth {
         } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
           ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
           ### If the current data is more than 60s old record it anyway
-          logmsg 1, "(query) Spurious temperature ($temperature) for $address: keeping previous data ($data{$address}{temperature})";
+          logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
           next;
         }
         $data{$address}{temperature} = $temperature;
@@ -997,7 +999,7 @@ sub query_device {
       if ($returned =~ s/^55${address}BE//) {
         return $returned;
       } else {
-        logmsg 2, "ERROR: returned data not valid for $address: $returned";
+        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
         return 'ERROR';
       }
     } elsif ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
@@ -1571,12 +1573,14 @@ sub QueryMSType {
   my $address = shift;
   my $returned;
 
+  my $name = $data{$address}{name};
+
   my $retry = 0;
 
   while (1) {
     $retry++;
     if ($retry > 5) {
-      logmsg 1, "Failed to read type of $main::LinkDev:$data{$address}{name}.";
+      logmsg 1, "Failed to read type of $main::LinkDev:$name.";
       return 0;
     }
 
@@ -1595,15 +1599,15 @@ sub QueryMSType {
 
     next if (! CheckData($returned));
     if ( (length($returned) != 40) || (! ($returned =~ s/^55${address}BE03([A-F0-9]{18})$/$1/)) ) {
-      logmsg 3, "ERROR: Query of MS type for $main::LinkDev:$data{$address}{name} returned: $returned";
+      logmsg 3, "ERROR: Query of MS type for $main::LinkDev:$name returned: $returned";
       next;
     }
     if ( $returned =~ m/^F{18}$/ ) {
-      logmsg 4, "ERROR: Got only F's on query of MS type for $main::LinkDev:$data{$address}{name}.";
+      logmsg 4, "ERROR: Got only F's on query of MS type for $main::LinkDev:$name.";
       next;
     }
     if (! CRC($returned) ) {
-      logmsg 1, "CRC error on query of MS type for $main::LinkDev:$data{$address}{name}: $returned";
+      logmsg 1, "CRC error on query of MS type for $main::LinkDev:$name: $returned";
       next;
     }
     $returned =~ s/[0-9A-F]{16}$//;		# we only need the first byte (2 chars)
@@ -1615,7 +1619,7 @@ sub QueryMSType {
     }
     if ($data{$address}{type} eq 'query') {
       $data{$address}{type} = $data{$address}{mstype};
-      logmsg 2, "$data{$address}{name} found to be type $returned (" . $data{$address}{mstype} . ")";
+      logmsg 2, "$name found to be type $returned (" . $data{$address}{mstype} . ")";
     }
     return 1;
   }
@@ -1625,19 +1629,21 @@ sub ChangeMSType {
   my $address = shift;
   my $returned;
 
+  my $name = $data{$address}{name};
+
   my $type = '';
   foreach (keys(%mstype)) {
     $type = $_ if ($mstype{$_} eq $data{$address}{type});
   }
   if ($type) {
-    logmsg 2, "Attempting to change $data{$address}{name} type to ".$data{$address}{type}.".";
+    logmsg 2, "Attempting to change $name type to ".$data{$address}{type}.".";
 
     my $retry = 0;
 
     while (1) {
       $retry++;
       if ($retry > 5) {
-        logmsg 1, "Failed to change $main::LinkDev:$data{$address}{name} type.";
+        logmsg 1, "Failed to change $main::LinkDev:$name type.";
         return 0;
       }
 
@@ -1667,7 +1673,7 @@ sub ChangeMSType {
       sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      logmsg 1, "Changed $data{$address}{name} type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
+      logmsg 1, "Changed $name type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
       return 1;
     }
   } else {
