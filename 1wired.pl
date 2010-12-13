@@ -395,7 +395,7 @@ sub monitor_linkhub {
     $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
 
     $returned = LinkData("\n");				# Discard any existing data
-    next if (! CheckData($returned));
+    # Do not check this data as we are not interested in it and after initial run should be empty and CheckData would return false
 
 ### Begin search for devices on LinkHub
     if ( ($LinkDevData{$LinkDev}{SearchNow}) || (($DoSearch) || (($AutoSearch) && ($count == 1))) ) {
@@ -413,9 +413,8 @@ sub monitor_linkhub {
       }
 
       $returned = LinkData("f\n");		# request first device ID
-      next if (! CheckData($returned));
-      if ($returned eq '') {			# no data returned so we'll start again and keep trying
-        logmsg 1, "No data returned on search of $LinkDev. Sleeping 1 second before retrying.";
+      if (! CheckData($returned)) {		# error or no data returned so we'll start again and keep trying
+        logmsg 1, "Error or no data returned on search of $LinkDev. Sleeping 1 second before retrying.";
         sleep 1;
         next;
       }
@@ -1322,13 +1321,13 @@ sub RecordRRDs {
       $type        = $data{$address}{type};
       next if ($type eq 'ds2401');
 
+      $temperature = $data{$address}{temperature};
+      $minute      = $data{$address}{minute};
+      $minute      = $data{$address}{$type} if ( ($type eq 'ds2423') or ($type eq 'rain') or ($type =~ /^depth[0-9]+$/) );
+
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       $type        = 'temperature' if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
-
-      $temperature = $data{$address}{temperature};
-      $minute      = $data{$address}{minute};
-      $minute      = $data{$address}{$type} if ( ($type eq 'ds2423') or ($type eq 'rain') );
 
       $temperature = 'U' unless defined($temperature);
       $minute      = 'U' unless defined($minute);
@@ -1558,6 +1557,10 @@ sub CheckData {
     }
     if ($returned eq 'E') {
       logmsg 2, "$main::LinkDev reported an error processing the command.";
+      return 0;
+    }
+    if ($returned eq '') {
+      logmsg 1, "$main::LinkDev returned no data.";
       return 0;
     }
     if ($returned eq 'P') {
