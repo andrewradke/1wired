@@ -1087,19 +1087,27 @@ sub list {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  foreach (@addresses) {
-    s/[\r\n\0]//g;		# Remove any CR, LF or NULL characters first
-    s/^[?!,]*//;		# THEN remove appropriate any leading characters
-    if ((defined($deviceDB{$_})) && (defined($deviceDB{$_}{name})) ) {
-      $output .= "Device found:\t $deviceDB{$_}{name} ($_)\n";
+  foreach my $address (@addresses) {
+    $address =~ s/[\r\n\0]//g;		# Remove any CR, LF or NULL characters first
+    $address =~ s/^[?!,]*//;		# THEN remove appropriate any leading characters
+    if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{name})) ) {
+      $output .= sprintf "Device found:   %-18s %16s %s,%s\n", $deviceDB{$address}{name}, $address, $data{$address}{linkdev}, $data{$address}{channel};
     } else {
-      $output .= "UNKNOWN device:\t $_\n";
+      $output .= sprintf "UNKNOWN device:   %16s %s,%s\n", $address, $data{$address}{linkdev}, $data{$address}{channel};
     }
   }
   foreach $tmp (keys(%deviceDB)) {
     if (! grep $_ eq $tmp, @addresses) {
-      $output .= "NOT RESPONDING:\t $deviceDB{$tmp}{name} ($tmp)\n" unless ($deviceDB{$tmp}{name} eq 'ignore');
+      $output .= sprintf "NOT RESPONDING: %-18s %16s\n", $deviceDB{$tmp}{name}, $tmp unless ($deviceDB{$tmp}{name} eq 'ignore');
     }
+  }
+  $output .= "-------------------------------------------------------------------------------\n";
+  foreach my $LinkDev (keys(%addresses)) {
+    my $age = 0;
+    if (defined($LinkDevData{$LinkDev}{SearchTime})) {
+      $age = time - $LinkDevData{$LinkDev}{SearchTime};
+    }
+    $output .= "$LinkDev last searched $age seconds ago\n";
   }
   return $output;
 }
@@ -1201,10 +1209,9 @@ sub value_all {
 
   $output .= "-------------------------------------------------------------------------------\n";
   foreach $LinkDev (keys(%addresses)) {
+    $age = 0;
     if (defined($LinkDevData{$LinkDev}{SearchTime})) {
-      $age       = time - $LinkDevData{$LinkDev}{SearchTime};
-    } else {
-      $age       = '0';
+      $age = time - $LinkDevData{$LinkDev}{SearchTime};
     }
     $output .= "$LinkDev last searched $age seconds ago\n";
   }
