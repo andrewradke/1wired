@@ -426,7 +426,7 @@ sub monitor_linkhub {
         } else {
           logmsg 1, "Checking for channel reporting support on $LinkDev";
           $returned = LinkData('\$');		# Toggles channel reporting
-          next if (! CheckData($returned));
+          next if ( ( $returned ne '' ) && (! CheckData($returned) ) );
           $returned = LinkData("f\n");		# request first device ID again
           next if (! CheckData($returned));
 
