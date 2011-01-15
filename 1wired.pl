@@ -375,7 +375,7 @@ sub monitor_linkhub {
   our $socket;
   our $select;
 
-  my ($temperature, $voltage);
+  my ($temperature, $voltage, $icurrent);
   my $address;
   my ($type, $name);
 
@@ -665,6 +665,7 @@ sub monitor_linkhub {
         if ($returned ne 'ERROR') {
           $temperature = $returned;
           $voltage = $returned;
+          $icurrent = $returned;
           if ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
             $voltage =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputA{8}, 32x0bits, CRC16
             $voltage = hex $voltage;
@@ -679,6 +680,20 @@ sub monitor_linkhub {
           } else {
             $temperature =~ s/^(....).*$/$1/;
             $voltage =~ s/^....(....).*$/$1/;
+            $icurrent =~ s/^........(....).*$/$1/;
+
+            $icurrent =~ s/^(..)(..)$/$2$1/;
+            $icurrent = hex $icurrent;
+            #$icurrent -= 65535 if ($icurrent > 1023);			# This gives + or - current
+            $icurrent = 65535 - $icurrent if ($icurrent > 1023);	# This gives only + current
+            $data{$address}{icurrent} = $icurrent;
+            if (! defined($data{$address}{iminute})) {
+              $data{$address}{iminute} = $icurrent;
+              $data{$address}{itime} = time();
+            } elsif ( ($icurrent > $data{$address}{iminute}) || ((time() - $data{$address}{itime}) >= $MinutePeriod ) ) {
+              $data{$address}{iminute} = $icurrent;
+              $data{$address}{itime} = time();
+            }
 
             #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
             if ( $data{$address}{type} eq 'ds1820') {
@@ -1227,7 +1242,7 @@ sub value {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $linkdev, $channel);
+  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $icurrent, $iminute, $itime, $linkdev, $channel);
   foreach $address (@addresses) {
     $name          = $data{$address}{name};
     if (($search eq lc($name)) || ($search eq lc($address))) {
@@ -1255,11 +1270,20 @@ sub value {
         $age       = 'NA';
       }
       $raw         = $data{$address}{raw};
+      $icurrent    = $data{$address}{icurrent};
+      $iminute     = $data{$address}{iminute};
+      if ($data{$address}{itime}) {
+        $itime      = time - $data{$address}{itime};
+      } else {
+        $itime      = 'NA';
+      }
       $temperature = 'NA' unless defined($temperature);
       $voltage     = 'NA' unless defined($voltage);
       $minute      = 'NA' unless defined($minute);
       $FiveMinute  = 'NA' unless defined($FiveMinute);
       $raw         = 'NA' unless defined($raw);
+      $icurrent    = 'NA' unless defined($icurrent);
+      $iminute     = 'NA' unless defined($iminute);
       $configtype  = $type;
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
@@ -1273,7 +1297,7 @@ sub value {
       } elsif ($type eq 'ds2401') {
         $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev$channel\n";
       } else {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev$channel\nConfigType: $configtype\nMStype: $mstype\n";
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev$channel\nConfigType: $configtype\nMStype: $mstype\nInstantaneousCurrent: $icurrent\nCurrent1MinuteMax: $iminute\nCurrentTime: $itime\n";
       }
       return $output;
     }
@@ -1309,7 +1333,7 @@ EOF
 
 sub RecordRRDs {
   my @addresses;
-  my ($address, $name, $type, $temperature, $minute, $age, $rrdage);
+  my ($address, $name, $type, $temperature, $minute, $iminute, $age, $rrdage);
   my ($rrdfile, $rrderror, $updatetime);
   while(1) {
     @addresses = ();
@@ -1331,6 +1355,7 @@ sub RecordRRDs {
       $temperature = $data{$address}{temperature};
       $minute      = $data{$address}{minute};
       $minute      = $data{$address}{$type} if ( ($type eq 'ds2423') or ($type eq 'rain') or ($type =~ /^depth[0-9]+$/) );
+      $iminute     = $data{$address}{iminute};
 
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
@@ -1338,6 +1363,7 @@ sub RecordRRDs {
 
       $temperature = 'U' unless defined($temperature);
       $minute      = 'U' unless defined($minute);
+      $iminute     = 'U' unless defined($iminute);
       if (defined($data{$address}{rrdage})) {
         $rrdage    = $data{$address}{rrdage};
       } else {
@@ -1352,15 +1378,18 @@ sub RecordRRDs {
         if ($age > 10) {
           $temperature = 'U';
           $minute      = 'U';
+          $iminute     = 'U';
         }
       } else {
         $temperature = 'U';
         $minute      = 'U';
+        $iminute     = 'U';
       }
       $rrdfile = "$RRDsDir/" . lc($name) . ".rrd";
 
       if (-w $rrdfile) {
-        my $rrdcmd = "$updatetime:$temperature:$minute";
+        logmsg 5, "RRD: $updatetime:$temperature:$minute:$iminute";
+        my $rrdcmd = "$updatetime:$temperature:$minute:$iminute";
         $rrdcmd = "$updatetime:$minute"		if ($type eq 'rain');
         $rrdcmd = "$updatetime:$temperature"	if ($type eq 'temperature');
         RRDs::update ($rrdfile, "$rrdcmd");
@@ -1378,6 +1407,7 @@ sub RecordRRDs {
 
         @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300")	unless ($type eq 'rain');
         @rrdcmd = (@rrdcmd, "DS:${type}:${rrdtype}:300:U:300")	unless ($type eq 'temperature');
+        @rrdcmd = (@rrdcmd, "DS:icurrent:GAUGE:300:U:1024")	unless ( ($type eq 'rain') || ($type eq 'temperature') );
 
         @rrdcmd = (@rrdcmd, 
           "RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
