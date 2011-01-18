@@ -248,11 +248,11 @@ if ($name) {
 
   if ($statecheck) {
     if ($test eq 'dryness') {
-      if ($iminute < 100) {
-        print "$device reports as dry ($iminute < 100).\n";
+      if ($iminute < 200) {
+        print "$device reports as dry ($iminute < 200).\n";
         exit 0;
       } else {
-        print "$device reports as possibly wet ($iminute >= 100).\n";
+        print "$device reports as possibly wet ($iminute >= 200).\n";
         exit 2;
       }
     }
