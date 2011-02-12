@@ -242,7 +242,7 @@ if ($name) {
   my ($start, $step, $data);		### RRD data
 
   if ($age > 30) {
-    print "$test data stale ($age seconds old)\n";
+    print "$test data stale (" . age_text($age) . " old)\n";
     exit 3;
   }
 
@@ -525,4 +525,19 @@ sub MaxInRange {
   }
 
   return $max;
+}
+
+sub age_text {
+	my $time = shift;
+	return '' unless ($time);
+	my $duration = '';
+	$duration = $time % 60 . "s" if (($time % 60) && ($time < 60));
+	$time = ($time - ($time % 60)) / 60;
+	$duration = $time % 60 . "m $duration" if ($time % 60);
+	$time = ($time - ($time % 60)) / 60;
+	$duration = $time % 24 . "h $duration" if ($time % 60);
+	$time = ($time - ($time % 24)) / 24;
+	$duration = $time . "d $duration" if ($time % 60);
+	$duration =~ s/ $//;
+	return $duration;
 }
