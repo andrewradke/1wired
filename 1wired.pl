@@ -655,7 +655,7 @@ sub monitor_linkhub {
         while ($returned eq 'ERROR') {
           $retry++;
           if ($retry > 5) {
-            logmsg 1, "Couldn't get valid data for $LinkDev:$name";
+            logmsg 1, "Didn't get valid data from $LinkDev:$name";
             last;
           }
           logmsg 3, "Didn't get valid data for $LinkDev:$name, retrying... (attempt $retry)";
@@ -1069,7 +1069,7 @@ sub query_device {
       }
       if ($returned =~ s/^55${address}BE00//) {
         if (! CRC($returned) ) {
-          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
+          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}";
           return 'ERROR' unless ($IgnoreCRCErrors);
         }
         $returned =~ s/^..//;
@@ -1647,7 +1647,7 @@ sub QueryMSType {
       next;
     }
     if (! CRC($returned) ) {
-      logmsg 1, "CRC error on query of MS type for $main::LinkDev:$name: $returned";
+      logmsg 1, "CRC error on query of MS type for $main::LinkDev:$name";
       next;
     }
     $returned =~ s/[0-9A-F]{16}$//;		# we only need the first byte (2 chars)
