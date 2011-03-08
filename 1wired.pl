@@ -286,7 +286,12 @@ while (1) {	# This is needed to restart the listening loop after a sig hup
     local $SIG{'HUP'} = 'IGNORE';	# we do not want the thread that processes queries to act on a SIGHUP
 
     logmsg 5, "Connection on socket $ListenPort";
-    $listener = threads->new(\&report, $client);
+    ### Starting a new thread causes a massive memory leak apparently due to the socket
+    ### Also the overhead of thread creation significantly increases load on the system
+    ### In testing I have not been able to generate a case where it couldn't answer queries
+    ### with only one thread. A thread pool could be used but probably doesn't warrant the complexity
+    #$listener = threads->new(\&report, $client);
+    report($client);
     close ($client) if (defined($client));	# This socket is handled by the new thread
     $client=undef;
 
