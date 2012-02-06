@@ -11,7 +11,7 @@ use threads::shared;
 use IO::Select;
 use IO::Socket::INET;
 use Device::SerialPort;
-#use Digest::CRC qw(crc16 crc8 crc16_hex crc8_hex);
+use Digest::CRC qw(crc16);
 
 use Proc::Daemon;
 
@@ -411,7 +411,7 @@ sub monitor_linkhub {
 
       unless (Reset()) {
         logmsg 1, "Initial reset failed during search on $LinkDev. Closing connection and sleeping 1 second before retrying.";
-        close ($socket) if (defined($socket));
+        close ($socket) if ( (defined($socket)) && ($LinkType eq 'LinkHubE') );
         $socket = undef;
         sleep 1;
         next;
@@ -467,7 +467,7 @@ sub monitor_linkhub {
         logmsg 1, "First device search on $LinkDev returned '$returned'";
         $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
-        if (! CRC($returned)) {
+        if (! CRCow($returned)) {
           logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         } else {
@@ -541,7 +541,7 @@ sub monitor_linkhub {
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
-          if (! CRC($returned)) {
+          if (! CRCow($returned)) {
             logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
             $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
@@ -1026,17 +1026,17 @@ sub query_device {
       my $page = 'C0';
       $page = 'E0' if ($data{$address}{type} eq 'rain');
       return 'ERROR' if (! Reset());
-      $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter, address 01C0h
+      $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter command, address 01{page}h
       return 'ERROR' if (! CheckData($returned));
       if ( (length($returned) != 108) || (! ($returned =~ m/^55${address}A5${page}01[A-F0-9]{84}$/)) ) {
         logmsg 3, "ERROR: Sent b55${address}A5${page}01 command; got: $returned";
         return 'ERROR';
       }
       if ($returned =~ s/^55${address}A5${page}01//) {
-#        if (! CRC16($returned) ) {
-#          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
-#          return 'ERROR' unless ($IgnoreCRCErrors);
-#        }
+        if (! CRC16("A5${page}01$returned") ) {		# initial pass CRC16 is calculated with the command byte, two memory address bytes, the contents of the data memory, the counter and the 0-bits
+          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
+          return 'ERROR' unless ($IgnoreCRCErrors);
+        }
         return $returned;
       } else {
         logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
@@ -1074,7 +1074,7 @@ sub query_device {
         return 'ERROR';
       }
       if ($returned =~ s/^55${address}BE00//) {
-        if (! CRC($returned) ) {
+        if (! CRCow($returned) ) {
           logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}";
           return 'ERROR' unless ($IgnoreCRCErrors);
         }
@@ -1508,17 +1508,17 @@ sub LinkConnect {
     } elsif ($main::LinkType eq 'LinkSerial') {
       $socket=Device::SerialPort->new($LinkDev);
       if ($socket) {
-        $socket->baudrate(9600);
-        $socket->databits(8);
-        $socket->parity('none');
-        $socket->stopbits(1);
-        $socket->handshake("none");
-        $socket->read_char_time(0);			# don't wait for each character
-        $socket->read_const_time(100);			# 100 millisecond per unfulfilled "read" call
-        $socket->write_settings || undef $socket;	# activate settings
+        $socket->baudrate(9600)		|| undef $socket;
+        $socket->databits(8)		|| undef $socket;
+        $socket->parity('none')		|| undef $socket;
+        $socket->stopbits(1)		|| undef $socket;
+        $socket->handshake("none")	|| undef $socket;
+        $socket->read_char_time(0);				# don't wait for each character
+        $socket->read_const_time(100);				# 100 millisecond per unfulfilled "read" call
+        $socket->write_settings		|| undef $socket;	# activate settings
       } else {
-        close ($socket) if (defined($socket));
-        $socket=undef;
+        #close ($socket) if (defined($socket));
+        undef $socket;
       }
     }
     last if ($socket);
@@ -1652,7 +1652,7 @@ sub QueryMSType {
       logmsg 4, "ERROR: Got only F's on query of MS type for $main::LinkDev:$name.";
       next;
     }
-    if (! CRC($returned) ) {
+    if (! CRCow($returned) ) {
       logmsg 1, "CRC error on query of MS type for $main::LinkDev:$name";
       next;
     }
@@ -1728,7 +1728,7 @@ sub ChangeMSType {
   }
 }
 
-sub CRC {
+sub CRCow {
   my $data = shift;
 
   my @CRClookup = (
@@ -1770,4 +1770,21 @@ sub CRC {
   }
   return 0 if ($crc);	# if $crc <> 0 then CRC failed
   return 1;		# if $crc == 0 then CRC passed
+}
+
+sub CRC16 {
+  my $data = shift;
+
+  $data =~ s/(.{2})(.{2})$//;	# grab the last two bytes for the CRC and remove them from the data to be checked
+  my $crc = "$2$1";		# reverse the bytes
+  $crc = hex $crc;		# convert it to a number
+  $crc = 65535 - $crc;		# invert the bits
+
+  my $bytes = pack "H*", $data;	# converts the hex data into a long set of bits
+
+  if ( $crc == crc16($bytes) ) {
+    return 1;
+  } else {
+    return 0;
+  }
 }
