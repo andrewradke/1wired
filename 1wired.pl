@@ -754,7 +754,8 @@ sub monitor_linkhub {
             if ($type eq 'humidity') {
               # convert voltage to humidity
               # as per the formula from the Honeywell 3610-001 data sheet
-              $voltage = ($voltage - 0.958)/0.0307;
+              #$voltage = ($voltage - 0.958)/0.0307;
+              $voltage = ( ($voltage / 5) - 0.16) / 0.0062;
             }
             if ($type eq 'light') {
               # if the reading is over 5V then it is actually < 0V and indicates darkness
