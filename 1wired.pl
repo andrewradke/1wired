@@ -1032,9 +1032,13 @@ sub query_device {
         logmsg 3, "ERROR: Sent b55${address}A5${page}01 command; got: $returned";
         return 'ERROR';
       }
+      if ($returned =~ m/^55${address}A5${page}01F{84}$/) {
+        logmsg 3, "ERROR: $LinkDev:$data{$address}{name} didn't return any data";
+        return 'ERROR';
+      }
       if ($returned =~ s/^55${address}A5${page}01//) {
         if (! CRC16("A5${page}01$returned") ) {		# initial pass CRC16 is calculated with the command byte, two memory address bytes, the contents of the data memory, the counter and the 0-bits
-          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}: $returned";
+          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}";
           return 'ERROR' unless ($IgnoreCRCErrors);
         }
         return $returned;
