@@ -419,7 +419,7 @@ sub monitor_linkhub {
 
       $returned = LinkData("f\n");		# request first device ID
       if (! CheckData($returned)) {		# error or no data returned so we'll start again and keep trying
-        logmsg 1, "Error or no data returned on search of $LinkDev. Sleeping 1 second before retrying.";
+        logmsg 2, "Error or no data returned on search of $LinkDev. Sleeping 1 second before retrying.";
         sleep 1;
         next;
       }
@@ -431,9 +431,15 @@ sub monitor_linkhub {
         } else {
           logmsg 1, "Checking for channel reporting support on $LinkDev";
           $returned = LinkData('\$');		# Toggles channel reporting
-          next if ( ( $returned ne '' ) && (! CheckData($returned) ) );
+          if ( ( $returned ne '' ) && (! CheckData($returned) ) ) {
+            logmsg 2, "Error toggling channel reporting on $LinkDev.";
+            next;
+          }
           $returned = LinkData("f\n");		# request first device ID again
-          next if (! CheckData($returned));
+          if (! CheckData($returned)) {
+            logmsg 2, "Error requesting first device on $LinkDev.";
+            next;
+          }
 
           if ($returned =~ m/,[1-5]$/) {
             $LinkDevData{$LinkDev}{channels} = 1;
@@ -479,7 +485,7 @@ sub monitor_linkhub {
             logmsg 1, "Ignoring $returned on $LinkDev.";
           } else {
             if (grep( /^$returned$/,@addresses ) ) {
-              logmsg 1, "$LinkDev:$returned already found.";
+              logmsg 5, "$LinkDev:$returned already found.";
             } else {
               push (@addresses, $returned);
             }
@@ -514,7 +520,7 @@ sub monitor_linkhub {
             $data{$returned}{type} = 'ds1820';
             $LinkDevData{$LinkDev}{ds1820} = 1;
           }
-          logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
+          logmsg 5, "Found $returned ($data{$returned}{name}) on $LinkDev";
         }
       } else {
         logmsg 1, "Bad data returned on search of $LinkDev: $returned";
@@ -522,7 +528,10 @@ sub monitor_linkhub {
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
-        next if (! CheckData($returned));
+        if (! CheckData($returned)) {
+          logmsg 2, "Error requesting next device on $LinkDev.";
+          next;
+        }
         if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
           logmsg 1, "Device search on $LinkDev returned '$returned'";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -554,7 +563,7 @@ sub monitor_linkhub {
             logmsg 1, "Ignoring $returned on $LinkDev.";
           } else {
             if (grep( /^$returned$/,@addresses ) ) {
-              logmsg 1, "$LinkDev:$returned already found.";
+              logmsg 5, "$LinkDev:$returned already found.";
               next;
             }
             push (@addresses, $returned);
@@ -587,7 +596,7 @@ sub monitor_linkhub {
             $data{$returned}{type} = 'ds1820';
             $LinkDevData{$LinkDev}{ds1820} = 1;
           }
-          logmsg 4, "Found $returned ($data{$returned}{name}) on $LinkDev";
+          logmsg 5, "Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
           logmsg 1, "Bad data returned on search of $LinkDev: $returned";
           $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
@@ -606,25 +615,41 @@ sub monitor_linkhub {
 
     ### BEGIN setting all 2438's to read input voltage rather than supply voltage
     $returned = LinkData("bCC4E0071\n");	# byte mode, skip rom (address all devices), write scratch 4E, register 00, value 71
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCC4E0071)";
+      next;
+    }
     sleep 0.01;					# wait 10ms
     next if (! Reset());
     $returned = LinkData("bCCBE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, skip rom (address all devices), read scratch BE, register 00
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCCBE00FFFFFFFFFFFFFFFFFF)";
+      next;
+    }
     sleep 0.01;					# wait 10ms
     next if (! Reset());
     $returned = LinkData("bCC4800\n");		# byte mode, skip rom (address all devices), copy scratch 48, register 00
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCC4800)";
+      next;
+    }
     sleep 0.01;					# wait 10ms
     next if (! Reset());
     ### END setting all 2438's to read input voltage rather than supply voltage
 
+    ### CHECK WHETHER USING PULL-UP MODE HERE IS A BUG
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting all 2438's convert temperature on $LinkDev. (pCC44)";
+      next;
+    }
     sleep 0.1;					# wait 100ms for temperature conversion
     next if (! Reset());
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting all 2438's convert voltage on $LinkDev. (bCCB4)";
+      next;
+    }
     sleep 0.01;					# wait 10ms for voltage conversion
 ### End addressing ALL devices
 
@@ -904,7 +929,7 @@ sub monitor_linkth {
           logmsg 3, "Setting device $name type to 'tsense'";
           $data{$address}{type} = 'tsense';
         }
-        logmsg 4, "Found $address ($name) on $LinkDev";
+        logmsg 5, "Found $address ($name) on $LinkDev";
 
         $data{$address}{mstype} = $type;
         $data{$address}{raw} = 'NA';
@@ -988,7 +1013,10 @@ sub query_device {
         # It can also loose the data after a Skip ROM so we address them inidividually here
         return 'ERROR' if (! Reset());
         $returned = LinkData("p55${address}44\n");	# byte mode in pull-up mode, match rom, address, convert T
-        return 'ERROR' if (! CheckData($returned));
+        if (! CheckData($returned)) {
+          logmsg 2, "Error requesting convert temperature on $LinkDev:$data{$address}{name}.";
+          return 'ERROR';
+        }
         sleep 1;					# Give it time to convert T
       }
 
@@ -1007,19 +1035,22 @@ sub query_device {
       # oo CRC
 
       $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read command BE, 9 bytes FF
-      return 'ERROR' if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting convert temperature on $LinkDev:$data{$address}{name}.";
+        return 'ERROR';
+      }
       if ( (length($returned) != 38) || (! $returned =~ m/^55${address}BE[A-F0-9]{18}$/) ) {
-        logmsg 3, "ERROR: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
       if ( $returned =~ m/^55${address}BEF{18}$/ ) {
-        logmsg 4, "ERROR: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
+        logmsg 4, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BEFFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
       if ($returned =~ s/^55${address}BE//) {
         return $returned;
       } else {
-        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name}: returned data not valid for $data{$address}{name}: $returned";
         return 'ERROR';
       }
     } elsif ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
@@ -1027,32 +1058,38 @@ sub query_device {
       $page = 'E0' if ($data{$address}{type} eq 'rain');
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter command, address 01{page}h
-      return 'ERROR' if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting read memory and counter on $LinkDev:$data{$address}{name}.";
+        return 'ERROR';
+      }
       if ( (length($returned) != 108) || (! ($returned =~ m/^55${address}A5${page}01[A-F0-9]{84}$/)) ) {
-        logmsg 3, "ERROR: Sent b55${address}A5${page}01 command; got: $returned";
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}A5${page}01 command; got: $returned";
         return 'ERROR';
       }
       if ($returned =~ m/^55${address}A5${page}01F{84}$/) {
-        logmsg 3, "ERROR: $LinkDev:$data{$address}{name} didn't return any data";
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: didn't return any data";
         return 'ERROR';
       }
       if ($returned =~ s/^55${address}A5${page}01//) {
         if (! CRC16("A5${page}01$returned") ) {		# initial pass CRC16 is calculated with the command byte, two memory address bytes, the contents of the data memory, the counter and the 0-bits
-          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}";
+          logmsg 1, "ERROR on $LinkDev:$data{$address}{name}: CRC failed";
           return 'ERROR' unless ($IgnoreCRCErrors);
         }
         return $returned;
       } else {
-        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name}: returned data not valid: $returned";
         return 'ERROR';
       }
 
     } else {
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
-      return 'ERROR' if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting recall memory page 0 to scratch pad on $LinkDev:$data{$address}{name}.";
+        return 'ERROR';
+      }
       if ($returned ne "55${address}B800") {
-        logmsg 3, "ERROR: Sent b55${address}B800 command; got: $returned";
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}B800 command; got: $returned";
         return 'ERROR';
       }
 
@@ -1068,13 +1105,16 @@ sub query_device {
       # ff: CRC
 
       $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read scratch pad for memory page 00
-      return 'ERROR' if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting read scratch pad for memory page 0 on $LinkDev:$data{$address}{name}.";
+        return 'ERROR';
+      }
       if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE00[A-F0-9]{18}$/)) ) {
-        logmsg 3, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
       if ( $returned =~ m/^55${address}BE00F{18}$/ ) {
-        logmsg 4, "ERROR: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
+        logmsg 4, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BE00FFFFFFFFFFFFFFFFFF command; got: $returned";
         return 'ERROR';
       }
       if ($returned =~ s/^55${address}BE00//) {
@@ -1385,10 +1425,13 @@ sub RecordRRDs {
       }
       if (defined($data{$address}{age})) {
         $age       = time - $data{$address}{age};
-        if ($age > 10) {
-          $temperature = 'U';
-          $minute      = 'U';
-          $iminute     = 'U';
+        if ($age > 60) {
+          logmsg 1, "Data age RRD for $name is > 60s ($age). Setting value as undefined unless it is a rain sensor!";
+          unless ($type eq 'rain') {
+            $temperature = 'U';
+            $minute      = 'U';
+            $iminute     = 'U';
+          }
         }
       } else {
         $temperature = 'U';
@@ -1398,10 +1441,11 @@ sub RecordRRDs {
       $rrdfile = "$RRDsDir/" . lc($name) . ".rrd";
 
       if (-w $rrdfile) {
-        logmsg 5, "RRD: $updatetime:$temperature:$minute:$iminute";
         my $rrdcmd = "$updatetime:$temperature:$minute:$iminute";
-        $rrdcmd = "$updatetime:$minute"		if ($type eq 'rain');
-        $rrdcmd = "$updatetime:$temperature"	if ($type eq 'temperature');
+        $rrdcmd = "$updatetime:$minute"			if ($type eq 'rain');
+        $rrdcmd = "$updatetime:$temperature"		if ($type eq 'temperature');
+        $rrdcmd = "$updatetime:$temperature:$minute"	if ($type eq 'humidity');
+        logmsg 4, "RRD for $name: $rrdcmd";
         RRDs::update ($rrdfile, "$rrdcmd");
         $rrderror=RRDs::error;
         if ($rrderror) {
@@ -1417,7 +1461,7 @@ sub RecordRRDs {
 
         @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300")	unless ($type eq 'rain');
         @rrdcmd = (@rrdcmd, "DS:${type}:${rrdtype}:300:U:300")	unless ($type eq 'temperature');
-        @rrdcmd = (@rrdcmd, "DS:icurrent:GAUGE:300:U:1024")	unless ( ($type eq 'rain') || ($type eq 'temperature') );
+        @rrdcmd = (@rrdcmd, "DS:icurrent:GAUGE:300:U:1024")	unless ( ($type eq 'rain') || ($type eq 'temperature') || ($type eq 'humidity') );
 
         @rrdcmd = (@rrdcmd, 
           "RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
@@ -1584,7 +1628,7 @@ sub LinkData {
 sub Reset {
   my $returned = LinkData("r\n");			# issue a 1-wire reset
   if ( (! CheckData($returned)) or ($returned eq '') ) {
-    logmsg 3, "Reset on $main::LinkDev returned '$returned' (expected 'P' or 'N')";
+    logmsg 2, "Reset on $main::LinkDev returned '$returned' (expected 'P' or 'N')";
     return 0;
   }
   return 1;
@@ -1635,19 +1679,25 @@ sub QueryMSType {
     }
 
     next if (! Reset());
-    # byte mode, match rom, address, recall page 03 to scratch
+    # byte mode, match rom, address, recall memory page 03 to scratch pad
     $returned = LinkData("b55${address}B803\n");
-    next if (! CheckData($returned));
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting recall memory page 03 to scratch pad on $main::LinkDev:$data{$address}{name}.";
+      next;
+    }
     if ($returned ne "55${address}B803") {
-      logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
+      logmsg 3, "ERROR on $main::LinkDev:$data{$address}{name}: Sent b55${address}B803 command; got: $returned";
       next;
     }
 
     next if (! Reset());
     # byte mode, match rom, address, read scratch pad for memory page 03
     $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");
+    if (! CheckData($returned)) {
+      logmsg 2, "Error requesting reading scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+      next;
+    }
 
-    next if (! CheckData($returned));
     if ( (length($returned) != 40) || (! ($returned =~ s/^55${address}BE03([A-F0-9]{18})$/$1/)) ) {
       logmsg 3, "ERROR: Query of MS type for $main::LinkDev:$name returned: $returned";
       next;
@@ -1700,24 +1750,36 @@ sub ChangeMSType {
       next if (! Reset());
 
       $returned = LinkData("b55${address}4E03${type}\n");	# byte mode, match rom, address, write scratch 4E, register 03, value $type
-      next if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting writing scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        next;
+      }
       sleep 0.01;						# wait 10ms
       next if (! Reset());
 
       $returned = LinkData("b55${address}BE03FF\n");		# byte mode, match rom, address, read scratch BE, register 03
-      next if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting reading scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        next;
+      }
       next if ($returned ne "55${address}BE03${type}");
       sleep 0.01;						# wait 10ms
       next if (! Reset());
       $returned = LinkData("b55${address}4803\n");		# byte mode, match rom, address, copy scratch 48, register 03
-      next if (! CheckData($returned));
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting copying scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        next;
+      }
       sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      $returned = LinkData("b55${address}B803\n");		# byte mode, match rom, address, recall page 03 to scratch
-      next if (! CheckData($returned));
+      $returned = LinkData("b55${address}B803\n");		# byte mode, match rom, address, recall memory page 03 to scratch pad
+      if (! CheckData($returned)) {
+        logmsg 2, "Error requesting recalling memory page 03 to scratch pad on $main::LinkDev:$data{$address}{name}.";
+        next;
+      }
       if ($returned ne "55${address}B803") {
-        logmsg 3, "ERROR: Sent b55${address}B803 command; got: $returned";
+        logmsg 3, "ERROR on $main::LinkDev:$data{$address}{name}: Sent b55${address}B803 command; got: $returned";
         next;
       }
       sleep 0.01;						# wait 10ms
