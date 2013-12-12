@@ -156,6 +156,8 @@ my %mstype = (
         '20' => 'pressure',
         '21' => 'pressure150',
         '22' => 'depth15',
+        '23' => 'pressure50',
+        '24' => 'pressure100',
     );
 
 if ($UseRRDs) {
@@ -795,10 +797,11 @@ sub monitor_linkhub {
               # 1.417psi/metre
               $voltage = $voltage / 1.417;
             }
-            if ($type eq 'pressure150') {
+            if ($type =~ m/^pressure([0-9]+)$/) {
               next if ($voltage > 5);
-              # 26.67 mV/psi; 0.5V ~= 0psi
-              $voltage = ($voltage - 0.5) * 37.5;
+              # 0.5V ~= 0psi
+              # 4V for pressure range
+              $voltage = ($voltage - 0.5) / 4 * $1;
             }
             if ($type eq 'pressure') {
               # 25.7 mV/psi; 0.43V ~= 0psi
@@ -941,9 +944,11 @@ sub monitor_linkth {
           # 1.417psi/metre
           $voltage = $voltage / 1.417;
         }
-        if ($type eq 'pressure150') {
-          # 26.67 mV/psi would be 150psi over 4V; therefore * 37.5
-          $voltage = ($voltage - 0.5) * 37.5;
+        if ($type =~ m/^pressure([0-9]+)$/) {
+          next if ($voltage > 5);
+          # 0.5V ~= 0psi
+          # 4V for pressure range
+          $voltage = ($voltage - 0.5) / 4 * $1;
         }
         if ($data{$address}{type} eq 'pressure') {
           # 26.67 mV/psi would be 150psi over 4V; therefore * 37.5
