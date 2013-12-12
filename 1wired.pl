@@ -153,7 +153,6 @@ my %mstype = (
         '1A' => 'voltage',
         '1B' => 'light',
         '1C' => 'current',
-        '20' => 'pressure',
         '21' => 'pressure150',
         '22' => 'depth15',
         '23' => 'pressure50',
@@ -803,10 +802,6 @@ sub monitor_linkhub {
               # 4V for pressure range
               $voltage = ($voltage - 0.5) / 4 * $1;
             }
-            if ($type eq 'pressure') {
-              # 25.7 mV/psi; 0.43V ~= 0psi
-              $voltage = ($voltage - 0.43) * 38.91;
-            }
             if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
               $voltage = $temperature;
             }
@@ -949,11 +944,6 @@ sub monitor_linkth {
           # 0.5V ~= 0psi
           # 4V for pressure range
           $voltage = ($voltage - 0.5) / 4 * $1;
-        }
-        if ($data{$address}{type} eq 'pressure') {
-          # 26.67 mV/psi would be 150psi over 4V; therefore * 37.5
-          # 25.7 mV/psi; 0.43V ~= 0psi
-          $voltage = ($voltage - 0.43) * 38.91;
         }
         if ( ($data{$address}{type} eq 'temperature') || ($data{$address}{type} eq 'tsense') || ($data{$address}{type} eq 'ds1820') ) {
           $voltage = $temperature;
