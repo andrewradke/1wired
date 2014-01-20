@@ -510,10 +510,10 @@ sub monitor_linkhub {
             logmsg 3, "Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
-          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
+          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
             # DS18B20
-            logmsg 3, "Setting device $returned type to 'tsense'";
-            $data{$returned}{type} = 'tsense';
+            logmsg 3, "Setting device $returned type to 'ds18b20'";
+            $data{$returned}{type} = 'ds18b20';
           }
           if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
             # DS1820 or DS18S20
@@ -588,11 +588,13 @@ sub monitor_linkhub {
             logmsg 3, "Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
-          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'tsense') ) {
-            logmsg 3, "Setting device $returned type to 'tsense'";
-            $data{$returned}{type} = 'tsense';
+          if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
+            # DS18B20
+            logmsg 3, "Setting device $returned type to 'ds18b20'";
+            $data{$returned}{type} = 'ds18b20';
           }
           if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
+            # DS1820 or DS18S20
             logmsg 3, "Setting device $returned type to 'ds1820'";
             $data{$returned}{type} = 'ds1820';
             $LinkDevData{$LinkDev}{ds1820} = 1;
@@ -732,7 +734,7 @@ sub monitor_linkhub {
               $temperature = hex $1;
               $temperature = $temperature - 256 if ( $2 eq 'FF' );
               $temperature = $temperature/2;
-            } elsif ( $data{$address}{type} eq 'tsense') {
+            } elsif ( $data{$address}{type} eq 'ds18b20') {
               $temperature =~ s/^(..)(..)$/$2$1/;
               $temperature = hex $temperature;
               $temperature = $temperature/16;
@@ -745,15 +747,12 @@ sub monitor_linkhub {
             }
             $temperature = restrict_num_decimal_digits($temperature,1);
   
-            if (! defined($data{$address}{temperature})) {
-              if ( $temperature == 85 ) {
+            if ( ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) && ( $temperature == 85 ) ) {
                 ### If the temperature is 85C it is probably a default value and should be ignored
-                logmsg 1, "(query) Initial temperature ($temperature) for $name is probably not valid (85C is a default): discarding readings.";
+                logmsg 3, "(query) 85C for $name is probably not valid (85C is the default for ds1820): discarding readings.";
                 next;
-              } else {
-                $data{$address}{temperature} = $temperature;
-              }
-            } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
+            }
+            if ( ( defined($data{$address}{temperature}) ) && ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
               ### If the current data is more than 60s old record it anyway
               logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
@@ -766,7 +765,7 @@ sub monitor_linkhub {
             $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
             $voltage = $voltage*0.01;		# each unit is 10mV
             $data{$address}{raw} = $voltage;
-            logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
+            logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') );
             if ($type eq 'current') {
               # convert voltage to current
               # At 23 degrees C, it is linear from .2 VDC (1 amp.) to 3.78 VDC (20 amps.).
@@ -802,7 +801,7 @@ sub monitor_linkhub {
               # 4V for pressure range
               $voltage = ($voltage - 0.5) / 4 * $1;
             }
-            if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+            if ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
               $voltage = $temperature;
             }
             if ($type eq 'depth15') {
@@ -923,9 +922,9 @@ sub monitor_linkth {
         $data{$address}{name} = $address if (! defined($data{$address}{name}));
         $name = $data{$address}{name};
 
-        if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'tsense') ) {
-          logmsg 3, "Setting device $name type to 'tsense'";
-          $data{$address}{type} = 'tsense';
+        if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'ds18b20') ) {
+          logmsg 3, "Setting device $name type to 'ds18b20'";
+          $data{$address}{type} = 'ds18b20';
         }
         logmsg 5, "Found $address ($name) on $LinkDev";
 
@@ -945,7 +944,7 @@ sub monitor_linkth {
           # 4V for pressure range
           $voltage = ($voltage - 0.5) / 4 * $1;
         }
-        if ( ($data{$address}{type} eq 'temperature') || ($data{$address}{type} eq 'tsense') || ($data{$address}{type} eq 'ds1820') ) {
+        if ( ($data{$address}{type} eq 'temperature') || ($data{$address}{type} eq 'ds18b20') || ($data{$address}{type} eq 'ds1820') ) {
           $voltage = $temperature;
         }
         $temperature = restrict_num_decimal_digits($temperature,1);
@@ -1001,7 +1000,7 @@ sub query_device {
   my $returned;
 
   eval {
-    if ( ( $data{$address}{type} eq 'tsense') || ( $data{$address}{type} eq 'ds1820') ) {
+    if ( ( $data{$address}{type} eq 'ds18b20') || ( $data{$address}{type} eq 'ds1820') ) {
 
       if ( $data{$address}{type} eq 'ds1820') {
         # Original ds1820 needs the bus pulled higher for longer for parasitic power
@@ -1256,7 +1255,7 @@ sub value_all {
       }
       if ($type eq 'ds2401') {
         $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s%s\n", $name, $voltage, $linkdev, $channel;
-      } elsif ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+      } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
         $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s%s\n", $name, $temperature, $age, $linkdev, $channel;
       } else {
         $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
@@ -1337,7 +1336,7 @@ sub value {
       } else {
         $channel = '';
       }
-      if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') ) {
+      if ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
         $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev$channel\nConfigType: $configtype\n";
       } elsif ($type eq 'ds2401') {
         $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev$channel\n";
@@ -1404,7 +1403,7 @@ sub RecordRRDs {
 
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
-      $type        = 'temperature' if ( ($type eq 'temperature') || ($type eq 'tsense') || ($type eq 'ds1820') );
+      $type        = 'temperature' if ( ($type eq 'ds18b20') || ($type eq 'ds1820') );
 
       $temperature = 'U' unless defined($temperature);
       $minute      = 'U' unless defined($minute);
