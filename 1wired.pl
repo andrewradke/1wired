@@ -1192,14 +1192,14 @@ sub search {
   $LinkDev =~ s/^ *//;
   my $output = '';
   if ( ($LinkDev eq 'all') || ($LinkDev eq '') ) {
-    logmsg 2, "Scheduling search for devices on all Links.";
+    logmsg 1, "Scheduling search for devices on all Links.";
     $output .= "Scheduling search for devices on all Links.\n";
     foreach $LinkDev (@LinkHubs) {
       $LinkDevData{$LinkDev}{SearchNow} = 1;
     }
   } else {
     if (defined($LinkDevData{$LinkDev})) {
-      logmsg 2, "Scheduling search for devices on $LinkDev.";
+      logmsg 1, "Scheduling search for devices on $LinkDev.";
       $output .= "Scheduling search for devices on $LinkDev.\n";
       $LinkDevData{$LinkDev}{SearchNow} = 1;
     } else {
@@ -1207,8 +1207,6 @@ sub search {
       $output .= "'$LinkDev' is not a configured Link.\n";
     }
   }
-  #logmsg 2, "Search for new devices will be done on the next pass.";
-  #$output .= "Search for new devices will be done on the next pass.\n";
   return $output;
 }
 
