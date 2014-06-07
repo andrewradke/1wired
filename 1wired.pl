@@ -1254,9 +1254,9 @@ sub value_all {
       if ($type eq 'ds2401') {
         $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s%s\n", $name, $voltage, $linkdev, $channel;
       } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s                      (age: %3d s)\t%s%s\n", $name, $temperature, $age, $linkdev, $channel;
+        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f                      (age: %3d s)\t%s%s\n", $name, $temperature, $age, $linkdev, $channel;
       } else {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5s - %10s: %5s  (age: %3d s)\t%s%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
+        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f - %10s: %5.1f  (age: %3d s)\t%s%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
       }
     }
   }
