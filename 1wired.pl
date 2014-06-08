@@ -388,7 +388,30 @@ sub monitor_linkhub {
   my $DoSearch = 1;
   my $LastDev;
 
+  $LinkDevData{$LinkDev}{DataError} = 0;
+
   while(1) {
+    if ( $LinkDevData{$LinkDev}{DataError} >= 5 ) {
+      logmsg 1, "ERROR: $LinkDevData{$LinkDev}{DataError} concurrent data errors on $LinkDev, trying LinkHub reset.";
+      $returned = LinkData('\!');		# Reset LinkHub (1-wire device not ethernet device)
+      $LinkDevData{$LinkDev}{DataError} = 0;
+      sleep 1;					# Give it a second to finish reseting
+      $returned = LinkData("\n");		# Discard returned reset data
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+      $returned = LinkData("\n");
+    }
     $count++;
     $agedata{$LinkDev} = time();
 
@@ -1632,26 +1655,33 @@ sub CheckData {
     if ($returned eq 'N') {
       logmsg 2, "$main::LinkDev reported that it has no devices. Scheduling a search." unless ($LinkDevData{$main::LinkDev}{SearchNow});
       $LinkDevData{$main::LinkDev}{SearchNow} = 1;
+      $LinkDevData{$main::LinkDev}{DataError} = 0;
       return 1;		# This means that there aren't any devices on the bus which is not a data error
     }
     if ($returned eq 'S') {
       logmsg 2, "$main::LinkDev reported a short on the bus.";
+      $LinkDevData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq 'E') {
       logmsg 2, "$main::LinkDev reported an error processing the command.";
+      $LinkDevData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq '') {
       logmsg 1, "$main::LinkDev returned no data.";
+      $LinkDevData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq 'P') {
+      $LinkDevData{$main::LinkDev}{DataError} = 0;
       return 1;		# This should only be after a reset but any other time the returned data will be checked outside this subroutine anyway
     }
   } else {
+    $LinkDevData{$main::LinkDev}{DataError}++;
     return 0;
   }
+  $LinkDevData{$main::LinkDev}{DataError} = 0;
   return 1;
 }
 
