@@ -85,7 +85,10 @@ $value = undef;
 
 if ($UseRRDs) {
   use RRDs;
-  die "Can't read from RRD dir ($RRDsDir)" unless (-r $RRDsDir);
+  unless ( (-d $RRDsDir) && (-r $RRDsDir) ) {
+    print "ERROR: Can't read from RRD dir '$RRDsDir'. Disabling using RRDs.\n";
+    $UseRRDs = 0;
+  }
 }
 
 if ($statecheck) {

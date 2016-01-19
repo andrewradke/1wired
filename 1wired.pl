@@ -13,139 +13,32 @@ use IO::Socket::INET;
 use Device::SerialPort;
 use Digest::CRC qw(crc16);
 
+use FileHandle;
+use IPC::Open2;
+use POSIX ":sys_wait_h";
+
 use Proc::Daemon;
+
+my $version = '1.9';
+$0 =~ s/.*\///;		# strip path from script name
+my $script = $0;
+
+### define variables shared by all threads
+my %data : shared;
+my %MastersData : shared;
+my %deviceDB : shared;
+my %addresses : shared;
+my %agedata : shared;
+my @threadNames : shared;
+
 
 ### Begin processing config file
 my $ConfigFile = '/etc/1wired/1wired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my $LogFile = '/var/log/1wired/1wired.log';
-my $DeviceFile = '/etc/1wired/devices';
-my $PidFile = '';
-my $ListenPort = 2345;
-my @LinkHubs;
-my @LinkTHs;
-my $SleepTime = 0;
-my $RunAsDaemon = 1;
-my $SlowDown = 0;
-my $MinutePeriod = 70;
-my $FiveMinutePeriod = 310;
-my $LogLevel = 5;
-my $UseRRDs = 0;
-my $RRDsDir = '/var/1wired';
-my $AutoSearch = 1;
-my $ReSearchOnError = 1;
-my $IgnoreCRCErrors = 0;
-my $UpdateMSType = 0;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType) :shared;
 
-my ($option, $value);
-open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
-while (<CONFIG>) {
-  chomp;
-  s/\w*#.*//;
-  next if (m/^\s*$/);
-  if (m/^([A-Za-z0-9]+)\s*=\s*(.+)$/) {
-    $option = $1;
-    $value = $2;
-    $value =~ s/\s*$//;
-    if ($option eq 'LogFile') {
-      $LogFile = $value;
-    } elsif ($option eq 'DeviceFile') {
-      $DeviceFile = $value;
-    } elsif ($option eq 'PidFile') {
-      $PidFile = $value;
-    } elsif ($option eq 'LinkTHs') {
-      @LinkTHs = split(/,\s*/, $value);
-    } elsif ($option eq 'LinkHubs') {
-      @LinkHubs = split(/,\s*/, $value);
-    } elsif ($option eq 'ListenPort') {
-      if ($value =~ m/^\d+$/) {
-        if ($ListenPort <= 65535 && $ListenPort > 1024) {
-          $ListenPort = $value;
-        } else {
-          die "Port defined in config file ($ListenPort) is not within the range 1025-65535. Exiting.\n";
-        }
-      } else {
-        $ListenPort = $value;
-        #die "Port defined in config file ($ListenPort) is not a number. Exiting.\n";		### If this isn't a UNIX system then this should fail
-      }
-    } elsif ($option eq 'LogLevel') {
-      if ($value =~ m/^\d+$/) {
-        if ($LogLevel <= 5 && $LogLevel >= 0) {
-          $LogLevel = $value;
-        } else {
-          print STDERR "LogLevel defined in config file ($value) is not within the range 0-5. Using default ($LogLevel).\n";
-        }
-      } else {
-        print STDERR "LogLevel defined in config file ($value) is not a number. Using default ($LogLevel).\n";
-      }
-    } elsif ($option eq 'SlowDown') {
-      if ($value =~ m/^\d+$/) {
-        $SlowDown = $value;
-      } else {
-        print STDERR "SlowDown value defined in config file ($value) is not a number. Using default ($SlowDown).\n";
-      }
-    } elsif ($option eq 'AutoSearch') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $AutoSearch = 0 if ($value =~ m/^(0|false|no)$/i);
-      } else {
-        print STDERR "AutoSearch value defined in config file ($value) is not valid. Using default ($AutoSearch).\n";
-      }
-    } elsif ($option eq 'UpdateMSType') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $UpdateMSType = 1 if ($value =~ m/^(1|true|yes)$/i);
-      } else {
-        print STDERR "UpdateMSType value defined in config file ($value) is not valid. Using default ($UpdateMSType).\n";
-      }
-    } elsif ($option eq 'IgnoreCRCErrors') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $IgnoreCRCErrors = 1 if ($value =~ m/^(1|true|yes)$/i);
-      } else {
-        print STDERR "IgnoreCRCErrors value defined in config file ($value) is not valid. Using default ($IgnoreCRCErrors).\n";
-      }
-    } elsif ($option eq 'ReSearchOnError') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $ReSearchOnError = 0 if ($value =~ m/^(0|false|no)$/i);
-      } else {
-        print STDERR "ReSearchOnError value defined in config file ($value) is not valid. Using default ($ReSearchOnError).\n";
-      }
-    } elsif ($option eq 'SleepTime') {
-      if ($value =~ m/^\d+(\.\d+|)$/) {
-        if (($value <= 2) && ($value >= 0)) {
-          $SleepTime = $value;
-        } else {
-          print STDERR "SleepTime defined in config file ($value) is not within the range 0-2. Using default ($SleepTime).\n";
-        }
-      } else {
-        print STDERR "SleepTime defined in config file ($value) is not a number. Using default ($SleepTime).\n";
-      }
-    } elsif ($option eq 'UseRRDs') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $UseRRDs = 1 if ($value =~ m/^(1|true|yes)$/i);
-      } else {
-        print STDERR "UseRRDs value defined in config file ($value) is not valid. Using default ($UseRRDs).\n";
-      }
-    } elsif ($option eq 'RRDsDir') {
-      $RRDsDir = $value;
-    } elsif ($option eq 'RunAsDaemon') {
-      if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
-        $RunAsDaemon = 0 if ($value =~ m/^(0|false|no)$/i);
-      } else {
-        print STDERR "RunAsDaemon value defined in config file ($value) is not valid. Using default ($RunAsDaemon).\n";
-      }
-    } elsif ($option eq 'StateFile') {
-      # Option not used by 1wired but possibly by other programs
-    } else {
-      print STDERR "Unknown option in config file: \"$option\"\n";
-    }
-  } else {
-    print STDERR "Unrecognised line in config file: \"$_\"\n";
-  }
-}
-close(CONFIG);
-$option = undef;
-$value = undef;
-### End processing config file
+ParseConfigFile();
 
 my %mstype = (
         '00' => 'temperature',
@@ -161,7 +54,7 @@ my %mstype = (
 
 if ($UseRRDs) {
   use RRDs;
-  die "Can't write to RRD dir ($RRDsDir)" unless (-w $RRDsDir);
+  die "Can't write to RRD dir ($RRDsDir)" unless ( (-w $RRDsDir) && (-d $RRDsDir) );
 }
 
 ### Begin deamon setup
@@ -181,27 +74,22 @@ if ($LogLevel && $RunAsDaemon) {
 
 
 ### Begin defining logmsg sub
-$0 =~ s/.*\///;		# strip path from script name
-my $script = $0;
 sub logmsg {
   my $tid = threads->tid();
   my $level = shift;
+  my $tname = 'main';
+
+  $tname = $threadNames[$tid] if ( defined($threadNames[$tid]) );
+
   if ($level <= $LogLevel) {
     if ($RunAsDaemon) {
-      print LOG scalar localtime, " $0\[$$\]: ($tid) @_\n";
+      print LOG scalar localtime, " $0\[$$\]: ($tname) @_\n";
     } else {
-      print scalar localtime, " $0\[$$\]: ($tid) @_\n";
+      print scalar localtime, " $0\[$$\]: ($tname) @_\n";
     }
   }
 }
 ### End defining logmsg sub
-
-### define variables shared by all threads
-my %data : shared;
-my %LinkDevData : shared;
-my %deviceDB : shared;
-my %addresses : shared;
-my %agedata : shared;
 
 ### define non-shared variables
 my $tmp;
@@ -212,43 +100,63 @@ my @tmp;
 ParseDeviceFile();
 ### End parsing device file
 
+logmsg(1, "Starting $script $version");
 
 ### Beginning of monitoring threads
-my %threads;
+my %threads : shared;
 foreach my $LinkDev (@LinkHubs) {
-  $LinkDevData{$LinkDev} = &share( {} );
+  $MastersData{$LinkDev} = &share( {} );
   $addresses{$LinkDev} = &share( [] );
-  $threads{$LinkDev} = threads->new(\&monitor_linkhub, $LinkDev);
+  $threads{$LinkDev} = shared_clone(threads->create(\&monitor_linkhub, $LinkDev));
+  $threadNames[$threads{$LinkDev}->tid] = $LinkDev;
 }
 foreach my $LinkDev (@LinkTHs) {
-  $LinkDevData{$LinkDev} = &share( {} );
+  $MastersData{$LinkDev} = &share( {} );
   $addresses{$LinkDev} = &share( [] );
-  $threads{$LinkDev} = threads->new(\&monitor_linkth, $LinkDev);
+  $threads{$LinkDev} = shared_clone(threads->create(\&monitor_linkth, $LinkDev));
+  $threadNames[$threads{$LinkDev}->tid] = $LinkDev;
 }
-#$threads{agedata} = threads->new(\&monitor_agedata);
+foreach my $MQTTSub (@MQTTSubs) {
+  $MastersData{$MQTTSub} = &share( {} );
+  $addresses{$MQTTSub} = &share( [] );
+  $threads{$MQTTSub} = shared_clone(threads->create(\&monitor_mqttsub, $MQTTSub));
+  $threadNames[$threads{$MQTTSub}->tid] = $MQTTSub;
+}
+
+$threads{threadstatus} = shared_clone(threads->create(\&monitor_threadstatus));
+$threadNames[$threads{threadstatus}->tid] = "Threads status";
+
+#$threads{agedata} = shared_clone(threads->create(\&monitor_agedata));
+#$threadNames[$threads{agedata}->tid] = "Age Data";
+
 ### End of monitoring thread
 
 
 ### Beginning of RRD recording
 if ($UseRRDs) {
-  my $RRDthread = threads->new(\&RecordRRDs);
+  $threads{RRDthread} = shared_clone(threads->create(\&RecordRRDs));
+  $threadNames[$threads{RRDthread}->tid] = "RRD thread";
 }
 ### End of RRD recording
 
 $SIG{'HUP'} = sub {
-  logmsg(1, "Re-reading device file.");
-  ParseDeviceFile();
-  foreach my $LinkDev (@LinkHubs) {
-    $LinkDevData{$LinkDev}{SearchNow} = 1;
-  }
-  logmsg 2, "Search for new devices will be done on the next pass.";
+  reload();
 };
+
+$SIG{'__DIE__'} = sub {
+  logmsg(1,"We've just died: '$_[0]'");
+  die $_[0];
+};
+
+$SIG{'INT'}  = \&cleanshutdown;
+$SIG{'QUIT'} = \&cleanshutdown;
+$SIG{'TERM'} = \&cleanshutdown;
 
 
 ### Beginning of listener
 my $server_sock;
 if ($ListenPort =~ m/^\d+$/) {
-  logmsg 1, "Creating listener on port $ListenPort";
+  logmsg 3, "Creating listener on port $ListenPort";
   $server_sock = new IO::Socket::INET (
 					LocalPort => $ListenPort,
 					Proto    => 'tcp',
@@ -256,7 +164,7 @@ if ($ListenPort =~ m/^\d+$/) {
 					);
   die "Cannot create socket on port $ListenPort: $!" unless $server_sock;
 } else {
-  logmsg 1, "Creating listener on socket $ListenPort";
+  logmsg 3, "Creating listener on socket $ListenPort";
   unlink "$ListenPort";
   $server_sock = IO::Socket::UNIX->new(
 					Local   => "$ListenPort",
@@ -291,10 +199,11 @@ while (1) {	# This is needed to restart the listening loop after a sig hup
     ### Also the overhead of thread creation significantly increases load on the system
     ### In testing I have not been able to generate a case where it couldn't answer queries
     ### with only one thread. A thread pool could be used but probably doesn't warrant the complexity
-    #$listener = threads->new(\&report, $client);
+    #$listener = shared_clone(threads->create(\&report, $client));
     report($client);
     close ($client) if (defined($client));	# This socket is handled by the new thread
     $client=undef;
+    logmsg 5, "Closed connection on socket $ListenPort";
 
     ### Clean up any threads that have completed.
     foreach my $thread (threads->list(threads::joinable)) {
@@ -306,12 +215,8 @@ while (1) {	# This is needed to restart the listening loop after a sig hup
 
   }
 }
-logmsg 1, "Closing socket $ListenPort";
-close ($server_sock);
-if (! ($ListenPort =~ m/^\d+$/)) {
-  logmsg(1, "Removing socket on $ListenPort");
-  unlink "$ListenPort";
-}
+
+cleanshutdown();
 ### Nothing after this will run since this is a continual loop
 ### End of listener
 
@@ -368,17 +273,27 @@ sub report {
 
 sub monitor_linkhub {
   our $LinkDev = shift;
+  my $tid = threads->tid();
+  our $socket;
+
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping monitor_linkhub thread for $LinkDev.");
+    Reset();
+    $main::socket->read(1023);
+    $socket->close if (defined($socket));;
+    threads->exit();
+  };
+
   logmsg 1, "Monitoring LinkHub $LinkDev";
-  our $LinkType = 'LinkHubE';
+  our $MasterType = 'LinkHubE';
   if ($LinkDev =~ m/^\/dev\//) {
-    $LinkType = 'LinkSerial'
+    $MasterType = 'LinkSerial'
   };
 
   my @addresses;
   my $count = 0;
 
   my $returned;
-  our $socket;
   our $select;
 
   my ($temperature, $voltage, $icurrent);
@@ -388,13 +303,13 @@ sub monitor_linkhub {
   my $DoSearch = 1;
   my $LastDev;
 
-  $LinkDevData{$LinkDev}{DataError} = 0;
+  $MastersData{$LinkDev}{DataError} = 0;
 
   while(1) {
-    if ( $LinkDevData{$LinkDev}{DataError} >= 5 ) {
-      logmsg 1, "ERROR: $LinkDevData{$LinkDev}{DataError} concurrent data errors on $LinkDev, trying LinkHub reset.";
+    if ( $MastersData{$LinkDev}{DataError} >= 5 ) {
+      logmsg 1, "ERROR on $LinkDev: $MastersData{$LinkDev}{DataError} concurrent data errors, trying LinkHub reset.";
       $returned = LinkData('\!');		# Reset LinkHub (1-wire device not ethernet device)
-      $LinkDevData{$LinkDev}{DataError} = 0;
+      $MastersData{$LinkDev}{DataError} = 0;
       sleep 1;					# Give it a second to finish reseting
       $returned = LinkData("\n");		# Discard returned reset data
       $returned = LinkData("\n");
@@ -421,21 +336,21 @@ sub monitor_linkhub {
       next;
     }
 
-    $select = IO::Select->new($socket) if ($LinkType eq 'LinkHubE');
+    $select = IO::Select->new($socket) if ($MasterType eq 'LinkHubE');
 
     $returned = LinkData("\n");				# Discard any existing data
     # Do not check this data as we are not interested in it and after initial run should be empty and CheckData would return false
 
-### Begin search for devices on LinkHub
-    if ( ($LinkDevData{$LinkDev}{SearchNow}) || (($DoSearch) || (($AutoSearch) && ($count == 1))) ) {
-      $LinkDevData{$LinkDev}{ds1820} = 0;
+    ### Begin search for devices on LinkHub
+    if ( ($MastersData{$LinkDev}{SearchNow}) || (($DoSearch) || (($AutoSearch) && ($count == 1))) ) {
+      $MastersData{$LinkDev}{ds1820} = 0;
       $LastDev = 0;
-      logmsg 3, "Searching for devices on $LinkDev";
+      logmsg 3, "INFO: Searching for devices on $LinkDev";
       @addresses = ();
 
       unless (Reset()) {
-        logmsg 1, "Initial reset failed during search on $LinkDev. Closing connection and sleeping 1 second before retrying.";
-        close ($socket) if ( (defined($socket)) && ($LinkType eq 'LinkHubE') );
+        logmsg 1, "ERROR on $LinkDev: Initial reset failed during search. Closing connection and waiting 1 second before retrying.";
+        close ($socket) if ( (defined($socket)) && ($MasterType eq 'LinkHubE') );
         $socket = undef;
         sleep 1;
         next;
@@ -443,78 +358,78 @@ sub monitor_linkhub {
 
       $returned = LinkData("f\n");		# request first device ID
       if (! CheckData($returned)) {		# error or no data returned so we'll start again and keep trying
-        logmsg 2, "Error or no data returned on search of $LinkDev. Sleeping 1 second before retrying.";
+        logmsg 1, "ERROR on $LinkDev: Error or no data returned on search. Retrying in 1 second.";
         sleep 1;
         next;
       }
 
-      unless ( defined($LinkDevData{$LinkDev}{channels}) ) {
+      unless ( defined($MastersData{$LinkDev}{channels}) ) {
         if ( $returned =~ m/,[1-5]$/ ) {
-          $LinkDevData{$LinkDev}{channels} = 1;
-          logmsg 1, "Channel reporting supported on $LinkDev.";
+          $MastersData{$LinkDev}{channels} = 1;
+          logmsg 2, "INFO: Channel reporting supported on $LinkDev.";
         } else {
-          logmsg 1, "Checking for channel reporting support on $LinkDev";
+          logmsg 3, "Checking for channel reporting support on $LinkDev";
           $returned = LinkData('\$');		# Toggles channel reporting
           if ( ( $returned ne '' ) && (! CheckData($returned) ) ) {
-            logmsg 2, "Error toggling channel reporting on $LinkDev.";
+            logmsg 2, "ERROR on $LinkDev: Error toggling channel reporting.";
             next;
           }
           $returned = LinkData("f\n");		# request first device ID again
           if (! CheckData($returned)) {
-            logmsg 2, "Error requesting first device on $LinkDev.";
+            logmsg 2, "ERROR on $LinkDev: Error requesting first device.";
             next;
           }
 
           if ($returned =~ m/,[1-5]$/) {
-            $LinkDevData{$LinkDev}{channels} = 1;
-            logmsg 1, "Channel reporting enabled on $LinkDev.";
+            $MastersData{$LinkDev}{channels} = 1;
+            logmsg 2, "INFO: Channel reporting enabled on $LinkDev.";
           } else {
-            $LinkDevData{$LinkDev}{channels} = 0;
-            logmsg 1, "Channel reporting NOT supported on $LinkDev.";
+            $MastersData{$LinkDev}{channels} = 0;
+            logmsg 3, "INFO: Channel reporting NOT supported on $LinkDev.";
           }
         }
       }
 
       $returned =~ s/^[-+,]*//gs;
       if ($returned eq 'N') {			# no devices found so we'll start again and keep trying until something is found
-        logmsg 4, "No devices found on $LinkDev. Sleeping 1 second before retrying.";
+        logmsg 2, "WARNING on $LinkDev: No devices found. Retrying in 1 second.";
         sleep 1;
         next;
       }
 
       # We have found at least one device so we can turn off the need to do more searches
       $DoSearch = 0 unless ($AutoSearch);
-      $LinkDevData{$LinkDev}{SearchNow} = 0;	# Default to not needing a new search unless an error is found
+      $MastersData{$LinkDev}{SearchNow} = 0;	# Default to not needing a new search unless an error is found
       my $channel = '';
-      if ($LinkDevData{$LinkDev}{channels}) {
+      if ($MastersData{$LinkDev}{channels}) {
         $returned =~ s/,([1-5])$//;
         $channel = $1;
       }
       if ($returned =~ m/^.$/) {		# Error but we'll keep searching in case there are more devices
-        logmsg 1, "First device search on $LinkDev returned '$returned'";
-        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+        logmsg 1, "ERROR on $LinkDev: First device search returned '$returned'";
+        $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned eq '0000000000000000') {
-        logmsg 1, "First device search on $LinkDev returned '$returned'";
-        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+        logmsg 1, "ERROR on $LinkDev: First device search returned '$returned'";
+        $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       } elsif ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
         if (! CRCow($returned)) {
-          logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
-          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+          logmsg 1, "ERROR on $LinkDev: CRC FAILED for device ID $returned";
+          $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         } else {
           #next if ( $returned =~ m/^01/);
           if (! defined($data{$returned})) {
             $data{$returned} = &share( {} );
           }
           if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
-            logmsg 1, "Ignoring $returned on $LinkDev.";
+            logmsg 1, "INFO: Ignoring $returned on $LinkDev.";
           } else {
             if (grep( /^$returned$/,@addresses ) ) {
-              logmsg 5, "$LinkDev:$returned already found.";
+              logmsg 5, "INFO: $LinkDev:$returned already found.";
             } else {
               push (@addresses, $returned);
             }
           }
-          $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{master}  = $LinkDev;
           $data{$returned}{channel} = $channel;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
@@ -530,53 +445,53 @@ sub monitor_linkhub {
           }
           if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
             # DS2423
-            logmsg 3, "Setting device $returned type to 'ds2423'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
             # DS18B20
-            logmsg 3, "Setting device $returned type to 'ds18b20'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds18b20'";
             $data{$returned}{type} = 'ds18b20';
           }
           if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
             # DS1820 or DS18S20
-            logmsg 3, "Setting device $returned type to 'ds1820'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
             $data{$returned}{type} = 'ds1820';
-            $LinkDevData{$LinkDev}{ds1820} = 1;
+            $MastersData{$LinkDev}{ds1820} = 1;
           }
-          logmsg 5, "Found $returned ($data{$returned}{name}) on $LinkDev";
+          logmsg 5, "INFO: Found $returned ($data{$returned}{name}) on $LinkDev";
         }
       } else {
-        logmsg 1, "Bad data returned on search of $LinkDev: $returned";
-        $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+        logmsg 1, "ERROR on $LinkDev: Bad data returned on search: $returned";
+        $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
       }
       while (!($LastDev)) {
         $returned = LinkData("n\n");			# request next device ID
         if (! CheckData($returned)) {
-          logmsg 2, "Error requesting next device on $LinkDev.";
+          logmsg 2, "ERROR on $LinkDev: Error requesting next device.";
           next;
         }
         if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
-          logmsg 1, "Device search on $LinkDev returned '$returned'";
-          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+          logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'";
+          $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
           next;
         }
         $LastDev = 1 if (!($returned =~ m/^\+,/));	# This is the last device
         $returned =~ s/^[-+,]*//gs;
         my $channel = '';
-        if ($LinkDevData{$LinkDev}{channels}) {
+        if ($MastersData{$LinkDev}{channels}) {
           $returned =~ s/,([1-5])$//;
           $channel = $1;
         }
         if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
           if ($returned eq '0000000000000000') {
-            logmsg 1, "Device search on $LinkDev returned '$returned'";
-            $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+            logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'";
+            $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
           if (! CRCow($returned)) {
-            logmsg 1, "CRC FAILED on $LinkDev for device ID $returned";
-            $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+            logmsg 1, "ERROR on $LinkDev: CRC failed for device ID $returned";
+            $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
           #next if ( $returned =~ m/^01/);
@@ -584,15 +499,15 @@ sub monitor_linkhub {
             $data{$returned} = &share( {} );
           }
           if ( (defined($data{$returned}{name})) && ($data{$returned}{name} eq 'ignore') ) {
-            logmsg 1, "Ignoring $returned on $LinkDev.";
+            logmsg 1, "INFO: Ignoring $returned on $LinkDev.";
           } else {
             if (grep( /^$returned$/,@addresses ) ) {
-              logmsg 5, "$LinkDev:$returned already found.";
+              logmsg 5, "INFO: $LinkDev:$returned already found.";
               next;
             }
             push (@addresses, $returned);
           }
-          $data{$returned}{linkdev} = $LinkDev;
+          $data{$returned}{master}  = $LinkDev;
           $data{$returned}{channel} = $channel;
           $data{$returned}{name} = $returned if (! defined($data{$returned}{name}));
           $data{$returned}{type} = 'unknown' if (! defined($data{$returned}{type}));
@@ -608,55 +523,55 @@ sub monitor_linkhub {
           }
           if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
             # DS2423
-            logmsg 3, "Setting device $returned type to 'ds2423'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
             # DS18B20
-            logmsg 3, "Setting device $returned type to 'ds18b20'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds18b20'";
             $data{$returned}{type} = 'ds18b20';
           }
           if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
             # DS1820 or DS18S20
-            logmsg 3, "Setting device $returned type to 'ds1820'";
+            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
             $data{$returned}{type} = 'ds1820';
-            $LinkDevData{$LinkDev}{ds1820} = 1;
+            $MastersData{$LinkDev}{ds1820} = 1;
           }
-          logmsg 5, "Found $returned ($data{$returned}{name}) on $LinkDev";
+          logmsg 5, "INFO: Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
-          logmsg 1, "Bad data returned on search of $LinkDev: $returned";
-          $LinkDevData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
+          logmsg 1, "ERROR on $LinkDev: Bad data returned on search: $returned";
+          $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         }
       }
-      logmsg 1, "An error during the search on $LinkDev produced an error. Another search has been requested." if ($LinkDevData{$LinkDev}{SearchNow});
-      logmsg 5, "Found last device on $LinkDev.";
+      logmsg 1, "ERROR on $LinkDev: An error occured during the search. Another search has been requested." if ($MastersData{$LinkDev}{SearchNow});
+      logmsg 5, "INFO: Found last device on $LinkDev.";
 
-      (@{$addresses{$LinkDev}}) = @addresses;
-      $LinkDevData{$LinkDev}{SearchTime} = time();
+      @{$addresses{$LinkDev}} = @addresses;
+      $MastersData{$LinkDev}{SearchTime} = time();
     }
-### End search for devices on LinkHub
+    ### End search for devices on LinkHub
 
-### Begin addressing ALL devices
+    ### Begin addressing ALL devices
     next if (! Reset());
 
     ### BEGIN setting all 2438's to read input voltage rather than supply voltage
     $returned = LinkData("bCC4E0071\n");	# byte mode, skip rom (address all devices), write scratch 4E, register 00, value 71
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCC4E0071)";
+      logmsg 2, "ERROR on $LinkDev: Error when requesting all 2438's write scratch for reading input voltage.";
       next;
     }
     sleep 0.01;					# wait 10ms
     next if (! Reset());
     $returned = LinkData("bCCBE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, skip rom (address all devices), read scratch BE, register 00
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCCBE00FFFFFFFFFFFFFFFFFF)";
+      logmsg 2, "ERROR on $LinkDev: Error when requesting all 2438's read scratch for reading input voltage.";
       next;
     }
     sleep 0.01;					# wait 10ms
     next if (! Reset());
     $returned = LinkData("bCC4800\n");		# byte mode, skip rom (address all devices), copy scratch 48, register 00
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting all 2438's read input voltage on $LinkDev. (bCC4800)";
+      logmsg 2, "ERROR on $LinkDev: Error when requesting all 2438's copy scratch for reading input voltage.";
       next;
     }
     sleep 0.01;					# wait 10ms
@@ -666,25 +581,25 @@ sub monitor_linkhub {
     ### CHECK WHETHER USING PULL-UP MODE HERE IS A BUG
     $returned = LinkData("pCC44\n");		# byte mode in pull-up mode, skip rom (address all devices), convert T
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting all 2438's convert temperature on $LinkDev. (pCC44)";
+      logmsg 2, "ERROR on $LinkDev: Error requesting all 2438's convert temperature.";
       next;
     }
     sleep 0.1;					# wait 100ms for temperature conversion
     next if (! Reset());
     $returned = LinkData("bCCB4\n");		# byte mode, skip rom (address all devices), convert V
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting all 2438's convert voltage on $LinkDev. (bCCB4)";
+      logmsg 2, "ERROR on $LinkDev: Error requesting all 2438's convert voltage.";
       next;
     }
     sleep 0.01;					# wait 10ms for voltage conversion
-### End addressing ALL devices
+    ### End addressing ALL devices
 
-### Begin query of devices on LinkHub
+    ### Begin query of devices on LinkHub
     foreach $address (@addresses) {
       last if (! defined($socket));
-      next if ( (! defined($data{$address})) || (! defined($data{$address}{linkdev})) );
+      next if ( (! defined($data{$address})) || (! defined($data{$address}{master})) );
       next if ($data{$address}{type} eq 'ds2401');
-      if ($data{$address}{linkdev} eq $LinkDev) {
+      if ($data{$address}{master} eq $LinkDev) {
         $data{$address}{name} = $address if (! defined($data{$address}{name}));
         $name = $data{$address}{name};
 
@@ -692,18 +607,18 @@ sub monitor_linkhub {
         if ( ($address =~ m/^26/) && (! defined($data{$address}{mstype})) ) {
           QueryMSType($address);
           if ($data{$address}{type} ne $data{$address}{mstype}) {
-            logmsg 1, "$name type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}";
+            logmsg 1, "WARNING on $LinkDev:$name: multisensor type mismatch: config: $data{$address}{type}; sensor: $data{$address}{mstype}";
             ChangeMSType($address) if ($UpdateMSType);
           }
         }
 
         if (! $data{$address}{type}) {
-          logmsg 2, "$name is of an unknown type.";
+          logmsg 2, "WARNING on $LinkDev:$name is of an unknown multisensor type.";
           $data{$address}{type} = 'unknown';
         }
         $type = $data{$address}{type};
 
-        logmsg 5, "querying $name ($address) as $type";
+        logmsg 5, "INFO: querying $name ($address) as $type";
 
         $returned = query_device($socket,$select,$address,$LinkDev);
 
@@ -711,29 +626,67 @@ sub monitor_linkhub {
         while ($returned eq 'ERROR') {
           $retry++;
           if ($retry > 5) {
-            logmsg 1, "Didn't get valid data from $LinkDev:$name";
+            logmsg 1, "ERROR on $LinkDev:$name: Didn't get valid data";
             last;
           }
-          logmsg 3, "Didn't get valid data for $LinkDev:$name, retrying... (attempt $retry)";
+          logmsg 3, "ERROR on $LinkDev:$name: Didn't get valid data, retrying... (attempt $retry)";
           $returned = query_device($socket,$select,$address,$LinkDev);
         }
 
         if ($returned ne 'ERROR') {
-          $temperature = $returned;
-          $voltage = $returned;
-          $icurrent = $returned;
           if ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
-            $voltage =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputA{8}, 32x0bits, CRC16
-            $voltage = hex $voltage;
-            $data{$address}{temperature} = '';
-            if ( ($data{$address}{type} eq 'rain') and (defined($data{$address}{rain})) and ($voltage > ($data{$address}{rain} + 10)) and ((time - $data{$address}{age}) < 60) ) {
-              ### If the counter is more than 10 above the previous recorded value it is probably not correct
-              ### If the current data is more than 60s old record it anyway
-              ### The counter can go backwards if it wraps so only check for large increases
-              logmsg 1, "(query) Spurious reading ($voltage) for $name: keeping previous data ($data{$address}{rain})";
-              next;
+            my ($channelA, $channelB) = split(/\n/, $returned);
+            chomp($channelA);
+            $channelA =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputA{8}, 32x0bits, CRC16
+            $channelA = hex $channelA;
+
+            chomp($channelB);
+            $channelB =~ s/^.{64}(..)(..)(..)(..)0{8}.{4}$/$4$3$2$1/;	# 32bytes{64}, InputB{8}, 32x0bits, CRC16
+            $channelB = hex $channelB;
+
+            $data{$address}{channelA} = $channelA;
+            $data{$address}{channelB} = $channelB;
+
+            if ($data{$address}{type} eq 'rain') {
+              if ( (defined($data{$address}{rain})) and ($channelB > ($data{$address}{rain} + 10)) and ((time - $data{$address}{age}) < 60) ) {
+                ### If the counter is more than 10 above the previous recorded value it is probably not correct
+                ### If the current data is more than 60s old record it anyway
+                ### The counter can go backwards if it wraps so only check for large increases
+                logmsg 1, "WARNING on $LinkDev:$name: (query) Spurious rain reading ($channelB): keeping previous data ($data{$address}{rain})";
+              } else {
+               $data{$address}{rain} = $channelB;;
+              }
             }
+            $data{$address}{age} = time();
+          } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
+            $temperature = $returned;
+            $temperature =~ s/^(....).*$/$1/;
+            #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+            if ( $data{$address}{type} eq 'ds1820') {
+              $temperature =~ m/^(..)(..)$/;
+              $temperature = hex $1;
+              $temperature = $temperature - 256 if ( $2 eq 'FF' );
+              $temperature = $temperature/2;
+            } else {
+              $temperature =~ s/^(..)(..)$/$2$1/;
+              $temperature = hex $temperature;
+              $temperature = $temperature/16;
+              $temperature -= 4096 if ($temperature > 4000);
+            }
+            $temperature = restrict_num_decimal_digits($temperature,1);
+  
+            if ( $temperature == 85 ) {
+                ### If the temperature is 85C it is probably a default value and should be ignored
+                logmsg 3, "WARNING on $LinkDev:$name: (query) exactly 85C is invalid (85C is the default for ds1820): discarding readings.";
+                next;
+            }
+            $data{$address}{temperature} = $temperature;
+            $data{$address}{age} = time();
+
           } else {
+            $temperature = $returned;
+            $voltage     = $returned;
+            $icurrent    = $returned;
             $temperature =~ s/^(....).*$/$1/;
             $voltage =~ s/^....(....).*$/$1/;
             $icurrent =~ s/^........(....).*$/$1/;
@@ -743,42 +696,23 @@ sub monitor_linkhub {
             #$icurrent -= 65535 if ($icurrent > 1023);			# This gives + or - current
             $icurrent = 65535 - $icurrent if ($icurrent > 1023);	# This gives only + current
             $data{$address}{icurrent} = $icurrent;
-            if (! defined($data{$address}{iminute})) {
-              $data{$address}{iminute} = $icurrent;
-              $data{$address}{itime} = time();
-            } elsif ( ($icurrent > $data{$address}{iminute}) || ((time() - $data{$address}{itime}) >= $MinutePeriod ) ) {
-              $data{$address}{iminute} = $icurrent;
-              $data{$address}{itime} = time();
-            }
 
             #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
-            if ( $data{$address}{type} eq 'ds1820') {
-              $temperature =~ m/^(..)(..)$/;
-              $temperature = hex $1;
-              $temperature = $temperature - 256 if ( $2 eq 'FF' );
-              $temperature = $temperature/2;
-            } elsif ( $data{$address}{type} eq 'ds18b20') {
-              $temperature =~ s/^(..)(..)$/$2$1/;
-              $temperature = hex $temperature;
-              $temperature = $temperature/16;
-              $temperature -= 4096 if ($temperature > 4000);
-            } else {
-              $temperature =~ s/^(..)(..)$/$2$1/;
-              $temperature = hex $temperature;
-              $temperature = $temperature>>3;
-              $temperature = $temperature*0.03125;
-            }
+            $temperature =~ s/^(..)(..)$/$2$1/;
+            $temperature = hex $temperature;
+            $temperature = $temperature>>3;
+            $temperature = $temperature*0.03125;
             $temperature = restrict_num_decimal_digits($temperature,1);
   
-            if ( ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) && ( $temperature == 85 ) ) {
-                ### If the temperature is 85C it is probably a default value and should be ignored
-                logmsg 3, "(query) 85C for $name is probably not valid (85C is the default for ds1820): discarding readings.";
+            if ( $temperature == 0 ) {
+                ### If the temperature is 0C it is probably a default value and should be ignored
+                logmsg 3, "WARNING on $LinkDev:$name: (query) exactly 0C is probably not valid (0C is the default for ds2438): discarding readings.";
                 next;
             }
             if ( ( defined($data{$address}{temperature}) ) && ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
               ### If the current data is more than 60s old record it anyway
-              logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
+              logmsg 1, "ERROR on $LinkDev:$name: (query) Spurious temperature ($temperature): keeping all previous data ($data{$address}{temperature})";
               next;
             }
             $data{$address}{temperature} = $temperature;
@@ -788,7 +722,7 @@ sub monitor_linkhub {
             $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
             $voltage = $voltage*0.01;		# each unit is 10mV
             $data{$address}{raw} = $voltage;
-            logmsg 5, "Raw voltage on $name ($LinkDev:$address) is $voltage" unless ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') );
+
             if ($type eq 'current') {
               # convert voltage to current
               # At 23 degrees C, it is linear from .2 VDC (1 amp.) to 3.78 VDC (20 amps.).
@@ -832,32 +766,67 @@ sub monitor_linkhub {
             } else {
               $voltage = restrict_num_decimal_digits($voltage,1);
             }
+            $data{$address}{$type} = $voltage;
+
+            my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
+
+            if (! defined($data{$address}{MinuteMax})) {
+              $data{$address}{MinuteMax}	= $voltage;
+              $data{$address}{TimeMax}		= time();
+            } else {
+              if ( $data{$address}{TimeMax} < $thisminute ) {
+                $data{$address}{FiveMinuteMax}	= $data{$address}{FourMinuteMax};
+                $data{$address}{FiveTimeMax}	= $data{$address}{FourTimeMax};
+                $data{$address}{FourMinuteMax}	= $data{$address}{ThreeMinuteMax};
+                $data{$address}{FourTimeMax}	= $data{$address}{ThreeTimeMax};
+                $data{$address}{ThreeMinuteMax}	= $data{$address}{TwoMinuteMax};
+                $data{$address}{ThreeTimeMax}	= $data{$address}{TwoTimeMax};
+                $data{$address}{TwoMinuteMax}	= $data{$address}{OneMinuteMax};
+                $data{$address}{TwoTimeMax}	= $data{$address}{OneTimeMax};
+                $data{$address}{OneMinuteMax}	= $data{$address}{MinuteMax};
+                $data{$address}{OneTimeMax}	= $data{$address}{TimeMax};
+                $data{$address}{MinuteMax}	= $voltage;
+                $data{$address}{TimeMax}	= time();
+              } elsif ($voltage > $data{$address}{MinuteMax}) {
+                $data{$address}{MinuteMax}	= $voltage;
+                $data{$address}{TimeMax}	= time();
+              }
+            }
+
+            if (! defined($data{$address}{MinuteMin})) {
+              $data{$address}{MinuteMin}	= $voltage;
+              $data{$address}{TimeMin}		= time();
+            } else {
+              if ( $data{$address}{TimeMin} < $thisminute ) {
+                $data{$address}{FiveMinuteMin}	= $data{$address}{FourMinuteMin};
+                $data{$address}{FiveTimeMin}	= $data{$address}{FourTimeMin};
+                $data{$address}{FourMinuteMin}	= $data{$address}{ThreeMinuteMin};
+                $data{$address}{FourTimeMin}	= $data{$address}{ThreeTimeMin};
+                $data{$address}{ThreeMinuteMin}	= $data{$address}{TwoMinuteMin};
+                $data{$address}{ThreeTimeMin}	= $data{$address}{TwoTimeMin};
+                $data{$address}{TwoMinuteMin}	= $data{$address}{OneMinuteMin};
+                $data{$address}{TwoTimeMin}	= $data{$address}{OneTimeMin};
+                $data{$address}{OneMinuteMin}	= $data{$address}{MinuteMin};
+                $data{$address}{OneTimeMin}	= $data{$address}{TimeMin};
+                $data{$address}{MinuteMin}	= $voltage;
+                $data{$address}{TimeMin}	= time();
+              } elsif ($voltage < $data{$address}{MinuteMin}) {
+                $data{$address}{MinuteMin}	= $voltage;
+                $data{$address}{TimeMin}	= time();
+              }
+            }
+
+            $data{$address}{age} = time();
           }
-          $data{$address}{$type} = $voltage;
-          if (! defined($data{$address}{minute})) {
-            $data{$address}{minute} = $voltage;
-            $data{$address}{time} = time();
-          } elsif ( ($voltage > $data{$address}{minute}) || ((time() - $data{$address}{time}) >= $MinutePeriod ) ) {
-            $data{$address}{minute} = $voltage;
-            $data{$address}{time} = time();
-          }
-          if (! defined($data{$address}{FiveMinute})) {
-            $data{$address}{FiveMinute} = $data{$address}{minute};
-            $data{$address}{FiveTime} = time();
-          } elsif ( ($data{$address}{minute} > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
-            $data{$address}{FiveMinute} = $data{$address}{minute};
-            $data{$address}{FiveTime} = time();
-          }
-          $data{$address}{age} = time();
         }
       }
     }
-    logmsg 5, "Finished querying devices on $LinkDev.";
-### End query of devices on LinkHub
+    logmsg 5, "INFO: Finished querying devices on $LinkDev.";
+    ### End query of devices on LinkHub
 
     $count = 0 if ($count > 1);
     if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the 1wire master
-      logmsg 5, "Finished loop for $LinkDev, closing socket.";
+      logmsg 5, "INFO: Finished loop for $LinkDev, closing socket.";
       close ($socket) if (defined($socket));
       $socket = undef;
       sleep $SlowDown;
@@ -867,8 +836,14 @@ sub monitor_linkhub {
 
 sub monitor_linkth {
   my $LinkDev = shift;
+  my $tid = threads->tid();
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping monitor_linkth thread for $LinkDev.");
+    threads->exit();
+  };
+
   logmsg 1, "Monitoring LinkTH $LinkDev";
-  our $LinkType = 'LinkSerial';
+  our $MasterType = 'LinkSerial';
 
   my @addresses;
 
@@ -899,7 +874,7 @@ sub monitor_linkth {
         last;
       }
       logmsg 3, "Didn't get any data from $LinkDev, retrying... (attempt $retry)";
-      sleep ($SleepTime + ($retry * 0.1));
+      sleep ($SleepTime + ($retry * 0.2));
       ($tmp,$returned) = $socket->read(1023);		# Get reply
     }
     next if ($retry > 10);				# Too many retries, start again.
@@ -933,7 +908,7 @@ sub monitor_linkth {
         if (! defined($data{$address})) {
           $data{$address} = &share( {} );
         }
-        $data{$address}{linkdev} = $LinkDev;
+        $data{$address}{master} = $LinkDev;
         if (! defined($data{$address}{type})) {
           if ( defined($mstype{$type}) ) {
             $data{$address}{type} = $mstype{$type};
@@ -990,28 +965,253 @@ sub monitor_linkth {
 
         $voltage = restrict_num_decimal_digits($voltage,1);
         $data{$address}{$data{$address}{type}} = $voltage;
-        if (! defined($data{$address}{minute})) {
-          $data{$address}{minute} = $voltage;
-          $data{$address}{time} = time();
-        } elsif ( ($voltage > $data{$address}{minute}) || ((time() - $data{$address}{time}) >= $MinutePeriod ) ) {
-          $data{$address}{minute} = $voltage;
-          $data{$address}{time} = time();
+
+        my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
+
+        if (! defined($data{$address}{MinuteMax})) {
+          $data{$address}{MinuteMax}		= $voltage;
+          $data{$address}{TimeMax}		= time();
+        } else {
+          if ( $data{$address}{TimeMax} < $thisminute ) {
+            $data{$address}{FiveMinuteMax}	= $data{$address}{FourMinuteMax};
+            $data{$address}{FiveTimeMax}	= $data{$address}{FourTimeMax};
+            $data{$address}{FourMinuteMax}	= $data{$address}{ThreeMinuteMax};
+            $data{$address}{FourTimeMax}	= $data{$address}{ThreeTimeMax};
+            $data{$address}{ThreeMinuteMax}	= $data{$address}{TwoMinuteMax};
+            $data{$address}{ThreeTimeMax}	= $data{$address}{TwoTimeMax};
+            $data{$address}{TwoMinuteMax}	= $data{$address}{OneMinuteMax};
+            $data{$address}{TwoTimeMax}		= $data{$address}{OneTimeMax};
+            $data{$address}{OneMinuteMax}	= $data{$address}{MinuteMax};
+            $data{$address}{OneTimeMax}		= $data{$address}{TimeMax};
+            $data{$address}{MinuteMax}		= $voltage;
+            $data{$address}{TimeMax}		= time();
+          } elsif ($voltage > $data{$address}{MinuteMax}) {
+            $data{$address}{MinuteMax}		= $voltage;
+            $data{$address}{TimeMax}		= time();
+          }
         }
-        if (! defined($data{$address}{FiveMinute})) {
-          $data{$address}{FiveMinute} = $data{$address}{minute};
-          $data{$address}{FiveTime} = time();
-        } elsif ( ($data{$address}{minute} > $data{$address}{FiveMinute}) || ((time() - $data{$address}{FiveTime}) >= $FiveMinutePeriod ) ) {
-          $data{$address}{FiveMinute} = $data{$address}{minute};
-          $data{$address}{FiveTime} = time();
+
+        if (! defined($data{$address}{MinuteMin})) {
+          $data{$address}{MinuteMin}		= $voltage;
+          $data{$address}{TimeMin}		= time();
+        } else {
+          if ( $data{$address}{TimeMin} < $thisminute ) {
+            $data{$address}{FiveMinuteMin}	= $data{$address}{FourMinuteMin};
+            $data{$address}{FiveTimeMin}	= $data{$address}{FourTimeMin};
+            $data{$address}{FourMinuteMin}	= $data{$address}{ThreeMinuteMin};
+            $data{$address}{FourTimeMin}	= $data{$address}{ThreeTimeMin};
+            $data{$address}{ThreeMinuteMin}	= $data{$address}{TwoMinuteMin};
+            $data{$address}{ThreeTimeMin}	= $data{$address}{TwoTimeMin};
+            $data{$address}{TwoMinuteMin}	= $data{$address}{OneMinuteMin};
+            $data{$address}{TwoTimeMin}		= $data{$address}{OneTimeMin};
+            $data{$address}{OneMinuteMin}	= $data{$address}{MinuteMin};
+            $data{$address}{OneTimeMin}		= $data{$address}{TimeMin};
+            $data{$address}{MinuteMin}		= $voltage;
+            $data{$address}{TimeMin}		= time();
+          } elsif ($voltage < $data{$address}{MinuteMin}) {
+            $data{$address}{MinuteMin}		= $voltage;
+            $data{$address}{TimeMin}		= time();
+          }
         }
+
         $data{$address}{age} = time();
       }
     }
-    (@{$addresses{$LinkDev}}) = @addresses;
-    $LinkDevData{$LinkDev}{SearchTime} = time();
+    @{$addresses{$LinkDev}} = @addresses;
+    $MastersData{$LinkDev}{SearchTime} = time();
   }
   #$socket->close;
   #$socket = undef;
+}
+
+sub monitor_mqttsub {
+  my $MQTTSub = shift;
+  my $tid = threads->tid();
+  my $pid;
+
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping monitor_mqttsub thread for $MQTTSub.");
+    kill 9, $pid;
+    close(RETURNED);
+    threads->exit();
+  };
+
+  my ($host, $channel);
+  if (! ($MQTTSub =~ m/^([^\/]+)\/(.+)$/) ) {
+    threads->die("MQTT topic defined in config file ($MQTTSub) is not valid (.*/.*). Exiting.\n");
+  }
+  logmsg 1, "Monitoring MQTT $MQTTSub";
+  our $MasterType = 'MQTT';
+
+  $MastersData{$MQTTSub}{channels} = 1;		# MQTT always supports channel reporting
+
+  my %localaddresses;
+
+  my $returned;
+
+  my ($temperature, $voltage, $timestamp);
+  my $address;
+  my ($type, $name);
+
+  LOOP: while (1) {
+    logmsg 4, "Connecting by $MasterType to $MQTTSub";
+    while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$MQTTSub") ) ) {
+      logmsg 3, "Failed to connect to $MasterType $MQTTSub. Sleeping for 10 seconds before retrying";
+      sleep 10;						# Wait for 10 seconds before retrying
+    }
+
+    while ($returned = <RETURNED>) {
+
+      $agedata{$MQTTSub} = time();
+
+      foreach (split(/\r?\n/, $returned)) {
+        next if ($_ =~ / EOD$/);
+        s/^([^ ]+)\/[^ ]+ //;
+        my $topic = $1;
+        @tmp = split(/,/, $_);				# $address $type,$temperatureC[,$value[,$timestamp]]
+        if ($tmp[0] =~ s/ ([0-9A-F]{2})$//) {
+
+          $address = $tmp[0];
+          $type = $1;
+          $temperature = $tmp[1];
+
+          if (! defined($data{$address})) {
+            $data{$address} = &share( {} );
+          }
+
+          $data{$address}{name} = $address if (! defined($data{$address}{name}));
+          $name = $data{$address}{name};
+
+          if (! ($temperature =~ m/^[0-9.]+$/) ) {
+            logmsg 1, "ERROR on $MQTTSub:$name: returned '$temperature' instead of a number.";
+            next;
+          }
+
+          $tmp[2] = 0 if (! $tmp[2]);
+          $voltage = $tmp[2];
+          $voltage = 0 unless ($voltage =~ m/^\d+$/);
+
+          $tmp[3] = time() if (! $tmp[3]);
+          $timestamp = $tmp[3];
+          $timestamp = time() unless ($timestamp =~ m/^\d+$/);
+
+          $data{$address}{master}  = $MQTTSub;
+          $data{$address}{channel} = $topic;
+          if (! defined($data{$address}{type})) {
+            if ( defined($mstype{$type}) ) {
+              $data{$address}{type} = $mstype{$type};
+            } else {
+              $data{$address}{type} = 'unknown';
+            }
+          }
+
+          if (! $localaddresses{$address}) {
+            $localaddresses{$address} = 1;
+            logmsg 2, "Found $address ($name) on $MQTTSub";
+            push (@{$addresses{$MQTTSub}}, $address);
+            $MastersData{$MQTTSub}{SearchTime} = time();
+          }
+
+          if ( ($address =~ m/^28/) && ($data{$address}{type} ne 'ds18b20') ) {
+            logmsg 3, "Setting device $name type to 'ds18b20'";
+            $data{$address}{type} = 'ds18b20';
+          }
+
+          $data{$address}{mstype} = $type;
+          $data{$address}{raw} = "$_";
+
+          if ($data{$address}{type} eq 'depth15') {
+            # 266.67 mV/psi; 0.5V ~= 0psi
+            #$voltage = ($voltage - 0.5) * 3.75;
+            $voltage = ($voltage - 0.43) * 3.891;
+            # 1.417psi/metre
+            $voltage = $voltage / 1.417;
+          }
+          if ($type =~ m/^pressure([0-9]+)$/) {
+            next if ($voltage > 5);
+            # 0.5V ~= 0psi
+            # 4V for pressure range
+            $voltage = ($voltage - 0.5) / 4 * $1;
+          }
+          if ( ($data{$address}{type} eq 'temperature') || ($data{$address}{type} eq 'ds18b20') || ($data{$address}{type} eq 'ds1820') ) {
+            $voltage = $temperature;
+          }
+          $temperature = restrict_num_decimal_digits($temperature,3);
+
+          if (! defined($data{$address}{temperature})) {
+            if ( $temperature == 85 ) {
+              ### If the temperature is 85C it is probably a default value and should be ignored
+              logmsg 1, "(query) Initial temperature ($temperature) for $name is probably not valid (85C is a default): discarding readings.";
+              next;
+            } else {
+              $data{$address}{temperature} = $temperature;
+            }
+          } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
+            ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
+            ### If the current data is more than 60s old record it anyway
+            logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
+            next;
+          }
+          $data{$address}{temperature} = $temperature;
+
+          $voltage = restrict_num_decimal_digits($voltage,1);
+          $data{$address}{$data{$address}{type}} = $voltage;
+
+          my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
+
+          if (! defined($data{$address}{MinuteMax})) {
+            $data{$address}{MinuteMax}		= $voltage;
+            $data{$address}{TimeMax}		= time();
+          } else {
+            if ( $data{$address}{TimeMax} < $thisminute ) {
+              $data{$address}{FiveMinuteMax}	= $data{$address}{FourMinuteMax};
+              $data{$address}{FiveTimeMax}	= $data{$address}{FourTimeMax};
+              $data{$address}{FourMinuteMax}	= $data{$address}{ThreeMinuteMax};
+              $data{$address}{FourTimeMax}	= $data{$address}{ThreeTimeMax};
+              $data{$address}{ThreeMinuteMax}	= $data{$address}{TwoMinuteMax};
+              $data{$address}{ThreeTimeMax}	= $data{$address}{TwoTimeMax};
+              $data{$address}{TwoMinuteMax}	= $data{$address}{OneMinuteMax};
+              $data{$address}{TwoTimeMax}	= $data{$address}{OneTimeMax};
+              $data{$address}{OneMinuteMax}	= $data{$address}{MinuteMax};
+              $data{$address}{OneTimeMax}	= $data{$address}{TimeMax};
+              $data{$address}{MinuteMax}	= $voltage;
+              $data{$address}{TimeMax}		= time();
+            } elsif ($voltage > $data{$address}{MinuteMax}) {
+              $data{$address}{MinuteMax}	= $voltage;
+              $data{$address}{TimeMax}		= time();
+            }
+          }
+
+          if (! defined($data{$address}{MinuteMin})) {
+            $data{$address}{MinuteMin}		= $voltage;
+            $data{$address}{TimeMin}		= time();
+          } else {
+            if ( $data{$address}{TimeMin} < $thisminute ) {
+              $data{$address}{FiveMinuteMin}	= $data{$address}{FourMinuteMin};
+              $data{$address}{FiveTimeMin}	= $data{$address}{FourTimeMin};
+              $data{$address}{FourMinuteMin}	= $data{$address}{ThreeMinuteMin};
+              $data{$address}{FourTimeMin}	= $data{$address}{ThreeTimeMin};
+              $data{$address}{ThreeMinuteMin}	= $data{$address}{TwoMinuteMin};
+              $data{$address}{ThreeTimeMin}	= $data{$address}{TwoTimeMin};
+              $data{$address}{TwoMinuteMin}	= $data{$address}{OneMinuteMin};
+              $data{$address}{TwoTimeMin}	= $data{$address}{OneTimeMin};
+              $data{$address}{OneMinuteMin}	= $data{$address}{MinuteMin};
+              $data{$address}{OneTimeMin}	= $data{$address}{TimeMin};
+              $data{$address}{MinuteMin}	= $voltage;
+              $data{$address}{TimeMin}		= time();
+            } elsif ($voltage < $data{$address}{MinuteMin}) {
+              $data{$address}{MinuteMin}	= $voltage;
+              $data{$address}{TimeMin}		= time();
+            }
+          }
+
+          $data{$address}{age} = $timestamp;
+        }
+      }
+    }
+    logmsg 1, "ERROR on $MQTTSub: Connection closed.";
+    close(RETURNED);
+  }
 }
 
 sub query_device {
@@ -1053,7 +1253,7 @@ sub query_device {
 
       $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read command BE, 9 bytes FF
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting convert temperature on $LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name} requesting convert temperature.";
         return 'ERROR';
       }
       if ( (length($returned) != 38) || (! $returned =~ m/^55${address}BE[A-F0-9]{18}$/) ) {
@@ -1071,38 +1271,40 @@ sub query_device {
         return 'ERROR';
       }
     } elsif ( ($data{$address}{type} eq 'ds2423') or ($data{$address}{type} eq 'rain') ) {
-      my $page = 'C0';
-      $page = 'E0' if ($data{$address}{type} eq 'rain');
-      return 'ERROR' if (! Reset());
-      $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter command, address 01{page}h
-      if (! CheckData($returned)) {
-        logmsg 2, "Error requesting read memory and counter on $LinkDev:$data{$address}{name}.";
-        return 'ERROR';
-      }
-      if ( (length($returned) != 108) || (! ($returned =~ m/^55${address}A5${page}01[A-F0-9]{84}$/)) ) {
-        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}A5${page}01 command; got: $returned";
-        return 'ERROR';
-      }
-      if ($returned =~ m/^55${address}A5${page}01F{84}$/) {
-        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: didn't return any data";
-        return 'ERROR';
-      }
-      if ($returned =~ s/^55${address}A5${page}01//) {
-        if (! CRC16("A5${page}01$returned") ) {		# initial pass CRC16 is calculated with the command byte, two memory address bytes, the contents of the data memory, the counter and the 0-bits
-          logmsg 1, "ERROR on $LinkDev:$data{$address}{name}: CRC failed";
-          return 'ERROR' unless ($IgnoreCRCErrors);
+      my $result;
+      foreach my $page ('C0', 'E0') {	# channel A, B
+        return 'ERROR' if (! Reset());
+        $returned = LinkData("b55${address}A5${page}01".('F' x 84)."\n");	# byte mode, match rom, address, read memory + counter command, address 01{page}h
+        if (! CheckData($returned)) {
+          logmsg 2, "ERROR on $LinkDev:$data{$address}{name} requesting read memory and counter.";
+          return 'ERROR';
         }
-        return $returned;
-      } else {
-        logmsg 2, "ERROR on $LinkDev:$data{$address}{name}: returned data not valid: $returned";
-        return 'ERROR';
+        if ( (length($returned) != 108) || (! ($returned =~ m/^55${address}A5${page}01[A-F0-9]{84}$/)) ) {
+          logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}A5${page}01 command; got: $returned";
+          return 'ERROR';
+        }
+        if ($returned =~ m/^55${address}A5${page}01F{84}$/) {
+          logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: didn't return any data";
+          return 'ERROR';
+        }
+        if ($returned =~ s/^55${address}A5${page}01//) {
+          if (! CRC16("A5${page}01$returned") ) {		# initial pass CRC16 is calculated with the command byte, two memory address bytes, the contents of the data memory, the counter and the 0-bits
+            logmsg 1, "ERROR on $LinkDev:$data{$address}{name}: CRC failed";
+            return 'ERROR';
+          }
+          $result .= "$returned\n";
+        } else {
+          logmsg 2, "ERROR on $LinkDev:$data{$address}{name}: returned data not valid: $returned";
+          return 'ERROR';
+        }
       }
+      return $result;
 
     } else {
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting recall memory page 0 to scratch pad on $LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERRORon $LinkDev:$data{$address}{name} requesting recall memory page 0 to scratch pad.";
         return 'ERROR';
       }
       if ($returned ne "55${address}B800") {
@@ -1123,7 +1325,7 @@ sub query_device {
 
       $returned = LinkData("b55${address}BE00FFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read scratch pad for memory page 00
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting read scratch pad for memory page 0 on $LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name} requesting read scratch pad for memory page 0.";
         return 'ERROR';
       }
       if ( (length($returned) != 40) || (! ($returned =~ m/^55${address}BE00[A-F0-9]{18}$/)) ) {
@@ -1136,18 +1338,18 @@ sub query_device {
       }
       if ($returned =~ s/^55${address}BE00//) {
         if (! CRCow($returned) ) {
-          logmsg 1, "ERROR: CRC failed for $LinkDev:$data{$address}{name}";
-          return 'ERROR' unless ($IgnoreCRCErrors);
+          logmsg 1, "ERROR on $LinkDev:$data{$address}{name}: CRC failed";
+          return 'ERROR';
         }
         $returned =~ s/^..//;
         return $returned;
       } else {
-        logmsg 2, "ERROR: returned data not valid for $data{$address}{name}: $returned";
+        logmsg 2, "ERROR on $data{$address}{name}: returned data not valid: $returned";
         return 'ERROR';
       }
     }
   } or do {
-    logmsg 2, "ERROR: getting data from $LinkDev (Last data: $returned)";
+    logmsg 2, "ERROR on $LinkDev: died during eval, last data: '$returned'";
     return 'ERROR';
   };
 }
@@ -1165,31 +1367,47 @@ sub restrict_num_decimal_digits {
 sub list {
   my $output = '';
   my @addresses;
+  my $channel;
   foreach my $LinkDev (keys(%addresses)) {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  foreach my $address (@addresses) {
+  foreach my $address (sort(@addresses)) {
     $address =~ s/[\r\n\0]//g;		# Remove any CR, LF or NULL characters first
     $address =~ s/^[?!,]*//;		# THEN remove appropriate any leading characters
-    if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{name})) ) {
-      $output .= sprintf "Device found:   %-18s %16s %s,%s\n", $deviceDB{$address}{name}, $address, $data{$address}{linkdev}, $data{$address}{channel};
+
+    $channel     = $data{$address}{channel};
+    if ( defined($channel) ) {
+      $channel = ":$channel" unless ($channel eq '');
     } else {
-      $output .= sprintf "UNKNOWN device:   %16s %s,%s\n", $address, $data{$address}{linkdev}, $data{$address}{channel};
+      $channel = '';
+    }
+
+    unless ($data{$address}{name} eq 'ignore') {
+      if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{name})) ) {
+        $output .= sprintf "Device found:   %-18s %16s %s%s\n", $deviceDB{$address}{name}, $address, $data{$address}{master}, $channel;
+      } else {
+        $output .= sprintf "UNKNOWN device:                    %16s %s%s\n", $address, $data{$address}{master}, $channel;
+      }
     }
   }
-  foreach $tmp (keys(%deviceDB)) {
+  foreach $tmp (sort(keys(%deviceDB))) {
     if (! grep $_ eq $tmp, @addresses) {
       $output .= sprintf "NOT RESPONDING: %-18s %16s\n", $deviceDB{$tmp}{name}, $tmp unless ($deviceDB{$tmp}{name} eq 'ignore');
     }
   }
-  $output .= "-------------------------------------------------------------------------------\n";
-  foreach my $LinkDev (keys(%addresses)) {
-    my $age = 0;
-    if (defined($LinkDevData{$LinkDev}{SearchTime})) {
-      $age = time - $LinkDevData{$LinkDev}{SearchTime};
+  $output .= "     ---------------------------------------------------------------------     \n";
+  foreach my $LinkDev (sort(keys(%addresses))) {
+    my $age = 'NA';
+    if (defined($MastersData{$LinkDev}{SearchTime})) {
+      $age = $MastersData{$LinkDev}{SearchTime};
+      if ( $age =~ m/^\d+$/ ) {
+        $age = time - $age;
+        $output .= sprintf "%40s last searched %d seconds ago\n", $LinkDev, $age;
+      } else {
+        $output .= sprintf "%40s search unknown: %s\n", $LinkDev, $age;
+      }
     }
-    $output .= "$LinkDev last searched $age seconds ago\n";
   }
   return $output;
 }
@@ -1202,10 +1420,237 @@ sub refresh {
 }
 
 sub reload {
+  my $msg;
   my $output = '';
-  logmsg(1, "Re-reading device file.");
-  $output .= "Re-reading device file.\n";
+
+  $msg = "Re-reading config file.";
+  logmsg(1, $msg);
+  $output .= $msg."\n";
+
+  my $OldLogFile = $LogFile;
+  my $OldDeviceFile = $DeviceFile;
+  my $OldPidFile = $PidFile;
+  my $OldListenPort = $ListenPort;
+  my @OldLinkHubs = @LinkHubs;
+  my @OldLinkTHs = @LinkTHs;
+  my @OldMQTTSubs = @MQTTSubs;
+  my $OldSleepTime = $SleepTime;
+  my $OldRunAsDaemon = $RunAsDaemon;
+  my $OldSlowDown = $SlowDown;
+  my $OldLogLevel = $LogLevel;
+  my $OldUseRRDs = $UseRRDs;
+  my $OldRRDsDir = $RRDsDir;
+  my $OldAutoSearch = $AutoSearch;
+  my $OldReSearchOnError = $ReSearchOnError;
+  my $OldUpdateMSType = $UpdateMSType;
+
+  ParseConfigFile();
+
+  ### Some values can't (or shouldn't) be changed while running
+  if ( $OldPidFile ne $PidFile ) {
+    $PidFile = $OldPidFile;
+    $msg = "ERROR: PidFile cannot be changed when running.";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldListenPort ne $ListenPort ) {
+    $ListenPort = $OldListenPort;
+    $msg = "ERROR: ListenPort cannot be changed when running.";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldRunAsDaemon ne $RunAsDaemon ) {
+    $RunAsDaemon = $OldRunAsDaemon;
+    $msg = "ERROR: RunAsDaemon cannot be changed when running.";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+
+
+  ### Some values will work automatically
+  if ( $OldDeviceFile ne $DeviceFile ) {
+    $msg = "DeviceFile changed from '$OldDeviceFile' to '$DeviceFile'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldSleepTime ne $SleepTime ) {
+    $msg = "SleepTime changed from '$OldSleepTime' to '$SleepTime'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldSlowDown ne $SlowDown ) {
+    $msg = "SlowDown changed from '$OldSlowDown' to '$SlowDown'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldLogLevel ne $LogLevel ) {
+    $msg = "LogLevel changed from '$OldLogLevel' to '$LogLevel'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldAutoSearch ne $AutoSearch ) {
+    $msg = "AutoSearch changed from '$OldAutoSearch' to '$AutoSearch'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldReSearchOnError ne $ReSearchOnError ) {
+    $msg = "ReSearchOnError changed from '$OldReSearchOnError' to '$ReSearchOnError'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldUpdateMSType ne $UpdateMSType ) {
+    $msg = "UpdateMSType changed from '$OldUpdateMSType' to '$UpdateMSType' (only affects devices found after this)";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+
+  if ( $OldLogFile ne $LogFile ) {
+    print STDERR "LogLevel has been set to 0. NO LOGGING WILL OCCUR!\n" if (! $LogLevel);
+    if ($LogLevel && $RunAsDaemon) {
+      $msg = "LogFile changed from '$OldLogFile' to '$LogFile'";
+      logmsg(1, $msg);
+      $output .= $msg."\n";
+      close(LOG);
+      open(LOG, ">>$LogFile") or die "Can't open log file ($LogFile): $!";	# Dieing here isn't a bad idea if the logfile can't be used
+      my $oldfh = select LOG;
+      $|=1;
+      select($oldfh);
+      $oldfh = undef;
+      logmsg(1, $msg);		# Put this message into the new log file too
+    }
+  }
+  if (! (join(', ', sort(@OldLinkHubs)) eq join(', ', sort(@LinkHubs))) ) {
+    my %OldLinkHubs = map { $_ => 1 } @OldLinkHubs;
+    my %LinkHubs = map { $_ => 1 } @LinkHubs;
+    foreach my $Link (@OldLinkHubs) {
+      if (! defined($LinkHubs{$Link}) ) {
+        logmsg(1, "LinkHub removed: $Link");
+        foreach (keys(%data)) {
+          delete $data{$_} if ( $data{$_}{master} eq $Link );
+        }
+        delete $MastersData{$Link};
+        delete $addresses{$Link};
+        $threads{$Link}->kill('KILL')->detach();
+        $threadNames[$threads{$Link}->tid] = undef;
+        delete $threads{$Link};
+      }
+    }
+    foreach my $Link (@LinkHubs) {
+      if (! defined($OldLinkHubs{$Link}) ) {
+        logmsg(1, "LinkHub added: $Link");
+        $MastersData{$Link} = &share( {} );
+        $addresses{$Link} = &share( [] );
+        $threads{$Link} = shared_clone(threads->create(\&monitor_linkhub, $Link));
+        $threadNames[$threads{$Link}->tid] = $Link;
+      }
+    }
+  }
+  if (! (join(', ', sort(@OldLinkTHs)) eq join(', ', sort(@LinkTHs))) ) {
+    my %OldLinkTHs = map { $_ => 1 } @OldLinkTHs;
+    my %LinkTHs = map { $_ => 1 } @LinkTHs;
+    foreach my $Link (@OldLinkTHs) {
+      if (! defined($LinkTHs{$Link}) ) {
+        logmsg(1, "LinkTH removed: $Link");
+        foreach (keys(%data)) {
+          delete $data{$_} if ( $data{$_}{master} eq $Link );
+        }
+        delete $MastersData{$Link};
+        delete $addresses{$Link};
+        $threads{$Link}->kill('KILL')->detach();
+        $threadNames[$threads{$Link}->tid] = undef;
+        delete $threads{$Link};
+      }
+    }
+    foreach my $Link (@LinkTHs) {
+      if (! defined($OldLinkTHs{$Link}) ) {
+        logmsg(1, "LinkTH added: $Link");
+        $MastersData{$Link} = &share( {} );
+        $addresses{$Link} = &share( [] );
+        $threads{$Link} = shared_clone(threads->create(\&monitor_linkth, $Link));
+        $threadNames[$threads{$Link}->tid] = $Link;
+      }
+    }
+  }
+  if (! (join(', ', sort(@OldMQTTSubs)) eq join(', ', sort(@MQTTSubs))) ) {
+    my %OldMQTTSubs = map { $_ => 1 } @OldMQTTSubs;
+    my %MQTTSubs = map { $_ => 1 } @MQTTSubs;
+    foreach my $MQTT (@OldMQTTSubs) {
+      if (! defined($MQTTSubs{$MQTT}) ) {
+        logmsg(1, "MQTTMaster removed: $MQTT");
+        foreach (keys(%data)) {
+          delete $data{$_} if ( $data{$_}{master} eq $MQTT );
+        }
+        delete $MastersData{$MQTT};
+        delete $addresses{$MQTT};
+        $threads{$MQTT}->kill('KILL')->detach();
+        $threadNames[$threads{$MQTT}->tid] = undef;
+        delete $threads{$MQTT};
+      }
+    }
+    foreach my $MQTT (@MQTTSubs) {
+      if (! defined($OldMQTTSubs{$MQTT}) ) {
+        logmsg(1, "MQTTMaster added: $MQTT");
+        $MastersData{$MQTT} = &share( {} );
+        $addresses{$MQTT} = &share( [] );
+        $threads{$MQTT} = shared_clone(threads->create(\&monitor_mqttsub, $MQTT));
+        $threadNames[$threads{$MQTT}->tid] = $MQTT;
+      }
+    }
+  }
+  if ( $OldRRDsDir ne $RRDsDir ) {			### changes automatically but needs to be checked
+    # This should be done before UseRRDs as if that has been turned on it needs to also check
+    # $RRDsDir is writable before enabling incase this value hasn't changed.
+    $msg = "RRDsDir changed from '$OldRRDsDir' to '$RRDsDir'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+    unless ( (-w $RRDsDir) && (-d $RRDsDir) ) {
+      $msg = "ERROR: Can't write to new RRD dir '$RRDsDir'. Reverting to '$OldRRDsDir'";
+      logmsg(1, $msg);
+      $output .= $msg."\n";
+      $RRDsDir = $OldRRDsDir;
+    }
+  }
+  if ( $OldUseRRDs ne $UseRRDs ) {
+    $msg = "UseRRDs changed from '$OldUseRRDs' to '$UseRRDs'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+    if ($UseRRDs) {
+      eval {
+        require RRDs;
+      } or do {
+        $msg = "ERROR: RRDs perl module not available. Reverting UseRRDs to off.";
+        logmsg(1, $msg);
+        $output .= $msg."\n";
+        $UseRRDs = $OldUseRRDs;
+      };
+      unless ( (-w $RRDsDir) && (-d $RRDsDir) ) {
+        $msg = "ERROR: Can't write to RRD dir '$RRDsDir'. Reverting UseRRDs to off.";
+        logmsg(1, $msg);
+        $output .= $msg."\n";
+        $UseRRDs = $OldUseRRDs;
+      }
+      if ($UseRRDs) {		# If the tests passed then UseRRDs will still be true
+        $msg = "Starting RRD recording";
+        logmsg(1, $msg);
+        $output .= $msg."\n";
+        $threads{RRDthread} = shared_clone(threads->create(\&RecordRRDs));
+        $threadNames[$threads{RRDthread}->tid] = "RRD thread";
+      }
+    } else {
+      $msg = "Stopping RRD recording";
+      logmsg(1, $msg);
+      $output .= $msg."\n";
+      $threads{RRDthread}->kill('KILL')->detach();
+      $threadNames[$threads{RRDthread}->tid] = undef;
+      delete $threads{RRDthread};
+    }
+  }
+
+  $msg = "Re-reading device file.";
+  logmsg(1, $msg);
+  $output .= $msg."\n";
   ParseDeviceFile();
+
   return $output;
 }
 
@@ -1218,13 +1663,13 @@ sub search {
     logmsg 1, "Scheduling search for devices on all Links.";
     $output .= "Scheduling search for devices on all Links.\n";
     foreach $LinkDev (@LinkHubs) {
-      $LinkDevData{$LinkDev}{SearchNow} = 1;
+      $MastersData{$LinkDev}{SearchNow} = 1;
     }
   } else {
-    if (defined($LinkDevData{$LinkDev})) {
+    if (defined($MastersData{$LinkDev})) {
       logmsg 1, "Scheduling search for devices on $LinkDev.";
       $output .= "Scheduling search for devices on $LinkDev.\n";
-      $LinkDevData{$LinkDev}{SearchNow} = 1;
+      $MastersData{$LinkDev}{SearchNow} = 1;
     } else {
       logmsg 1, "'$LinkDev' is not a configured Link.";
       $output .= "'$LinkDev' is not a configured Link.\n";
@@ -1250,36 +1695,64 @@ sub value_all {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $voltage, $age, $linkdev, $channel);
+  my ($address, $name, $type, $master, $channel, $age);
   foreach $address (@addresses) {
+    next if ($data{$address}{name} eq 'ignore');
     eval {
       $name        = $data{$address}{name};
-      $temperature = $data{$address}{temperature};
-      $type        = $data{$address}{type};
-      $voltage     = $data{$address}{$type};
-      $linkdev     = $data{$address}{linkdev};
-      $channel     = $data{$address}{channel};
-      if (defined($data{$address}{age})) {
-        $age       = time - $data{$address}{age};
-      } else {
-        $age       = '0';
-      }
-      $temperature = 'NA' unless defined($temperature);
-      $voltage     = 'NA' unless defined($voltage);
       $name        = "* $address" if ($name eq $address);
-      $type        =~ s/^pressure[0-9]+$/pressure/;
-      $type        =~ s/^depth[0-9]+$/depth/;
+      $type        = $data{$address}{type};
+      $master      = $data{$address}{master};
+      $channel     = $data{$address}{channel};
+      $age         = 'NA';
+      if ($data{$address}{age}) {
+        $age       = time() - $data{$address}{age};
+      }
       if ( defined($channel) ) {
-        $channel = ",$channel" unless ($channel eq '');
+        $channel = ":$channel" unless ($channel eq '');
       } else {
         $channel = '';
       }
+      $type        =~ s/^pressure[0-9]+$/pressure/;
+      $type        =~ s/^depth[0-9]+$/depth/;
+
       if ($type eq 'ds2401') {
-        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                      \t%s%s\n", $name, $voltage, $linkdev, $channel;
+        my $serial      =  $data{$address}{$type};
+        $serial         = 'NA' unless defined($serial);
+        $OutputData{$name} = sprintf "%-18s - serial number: %-18s                        %s%s\n",           $name, $serial, $master, $channel;
+
       } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f                      (age: %3d s)\t%s%s\n", $name, $temperature, $age, $linkdev, $channel;
+        my $temperature = $data{$address}{temperature};
+        $temperature = 'NA' unless defined($temperature);
+        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f                      (age: %3s s)  %s%s\n", $name, $temperature, $age, $master, $channel;
+
+      } elsif ($type eq 'ds2423') {
+        my $channelA    = $data{$address}{channelA};
+        $channelA       = 'NA' unless defined($channelA);
+        my $channelB    = $data{$address}{channelB};
+        $channelB       = 'NA' unless defined($channelB);
+        $OutputData{$name} = sprintf "%-18s - %9s A: %-10s   B: %-10s (age: %3s s)  %s%s\n",                 $name, $type, $channelA, $channelB, $age, $master, $channel;
+
+      } elsif ($type eq 'rain') {
+        my $rain        = $data{$address}{$type};
+        $rain           = 'NA' unless defined($rain);
+        $OutputData{$name} = sprintf "%-18s - %11s: %-10s                 (age: %3s s)  %s%s\n",             $name, $type, $rain, $age, $master, $channel;
+
       } else {
-        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f - %10s: %5.1f  (age: %3d s)\t%s%s\n", $name, $temperature, $type, $voltage, $age, $linkdev, $channel;
+        my $temperature = $data{$address}{temperature};
+        if (defined($temperature) ) {
+          $temperature = sprintf "%5.1f", $temperature;
+        } else {
+          $temperature = ' NA  ';
+        }
+        my $voltage     = $data{$address}{$type};
+        if (defined($voltage) ) {
+          $voltage = sprintf "%5.1f", $voltage;
+        } else {
+          $voltage = ' NA  ';
+        }
+        $OutputData{$name} = sprintf "%-18s - temperature: %s   %10s: %s  (age: %3s s)  %s%s\n",       $name, $temperature, $type, $voltage, $age, $master, $channel;
+
       }
     }
   }
@@ -1287,13 +1760,18 @@ sub value_all {
     $output .= $OutputData{$name};
   }
 
-  $output .= "-------------------------------------------------------------------------------\n";
-  foreach $LinkDev (keys(%addresses)) {
-    $age = 0;
-    if (defined($LinkDevData{$LinkDev}{SearchTime})) {
-      $age = time - $LinkDevData{$LinkDev}{SearchTime};
+  $output .= "     ---------------------------------------------------------------------     \n";
+  foreach $LinkDev (sort(keys(%addresses))) {
+    $age = 'NA';
+    if (defined($MastersData{$LinkDev}{SearchTime})) {
+      $age = $MastersData{$LinkDev}{SearchTime};
+      if ( $age =~ m/^\d+$/ ) {
+        $age = time - $age;
+        $output .= sprintf "%40s last searched %d seconds ago\n", $LinkDev, $age;
+      } else {
+        $output .= sprintf "%40s search unknown: %s\n", $LinkDev, $age;
+      }
     }
-    $output .= "$LinkDev last searched $age seconds ago\n";
   }
   return $output;
 }
@@ -1307,62 +1785,115 @@ sub value {
     (@addresses) = (@addresses, @{$addresses{$LinkDev}});
   }
 
-  my ($address, $name, $temperature, $type, $configtype, $mstype, $voltage, $minute, $FiveMinute, $time, $FiveTime, $age, $raw, $icurrent, $iminute, $itime, $linkdev, $channel);
+  my ($address, $name, $type, $master, $channel, $rawage, $age, $configtype);
   foreach $address (@addresses) {
     $name          = $data{$address}{name};
     if (($search eq lc($name)) || ($search eq lc($address))) {
-      $temperature = $data{$address}{temperature};
       $type        = $data{$address}{type};
-      $mstype      = $data{$address}{mstype};
-      $voltage     = $data{$address}{$type};
-      $linkdev     = $data{$address}{linkdev};
+      $master      = $data{$address}{master};
       $channel     = $data{$address}{channel};
-      $minute      = $data{$address}{minute};
-      $FiveMinute  = $data{$address}{FiveMinute};
-      if ($data{$address}{time}) {
-        $time      = time - $data{$address}{time};
-      } else {
-        $time      = 'NA';
-      }
-      if ($data{$address}{FiveTime}) {
-        $FiveTime  = time - $data{$address}{FiveTime};
-      } else {
-        $FiveTime  = 'NA';
-      }
+      $rawage      = $data{$address}{age};
+      $rawage      = 'NA' unless defined($rawage);
+      $age         = 'NA';
       if ($data{$address}{age}) {
-        $age       = time - $data{$address}{age};
-      } else {
-        $age       = 'NA';
+        $age       = time() - $data{$address}{age};
       }
-      $raw         = $data{$address}{raw};
-      $icurrent    = $data{$address}{icurrent};
-      $iminute     = $data{$address}{iminute};
-      if ($data{$address}{itime}) {
-        $itime      = time - $data{$address}{itime};
-      } else {
-        $itime      = 'NA';
-      }
-      $temperature = 'NA' unless defined($temperature);
-      $voltage     = 'NA' unless defined($voltage);
-      $minute      = 'NA' unless defined($minute);
-      $FiveMinute  = 'NA' unless defined($FiveMinute);
-      $raw         = 'NA' unless defined($raw);
-      $icurrent    = 'NA' unless defined($icurrent);
-      $iminute     = 'NA' unless defined($iminute);
-      $configtype  = $type;
-      $type        =~ s/^pressure[0-9]+$/pressure/;
-      $type        =~ s/^depth[0-9]+$/depth/;
       if ( defined($channel) ) {
-        $channel = ",$channel" unless ($channel eq '');
+        $channel = ":$channel" unless ($channel eq '');
       } else {
         $channel = '';
       }
-      if ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nupdated: $time\nage: $age\nlinkdev: $linkdev$channel\nConfigType: $configtype\n";
-      } elsif ($type eq 'ds2401') {
-        $output .= "name: $name\naddress: $address\ntype: $type\nserial number: $voltage\nlinkdev: $linkdev$channel\n";
+      $configtype  = $type;
+      $type        =~ s/^pressure[0-9]+$/pressure/;
+      $type        =~ s/^depth[0-9]+$/depth/;
+
+      if ($type eq 'ds2401') {
+        my $serial      =  $data{$address}{$type};
+        $serial         = 'NA' unless defined($serial);
+        $output        .= "name: $name\naddress: $address\ntype: $type\nserial number: $serial\nmaster: $master$channel\n";
+
+      } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
+        my $temperature = $data{$address}{temperature};
+        $temperature    = 'NA' unless defined($temperature);
+        my $raw         = $data{$address}{raw};
+        $raw            = 'NA' unless defined($raw);
+        $output        .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\nage: $age\nRawAge: $rawage\nRawData: $raw\nmaster: $master$channel\nConfigType: $configtype\n";
+
+      } elsif ($type eq 'ds2423') {
+        my $channelA    = $data{$address}{channelA};
+        $channelA       = 'NA' unless defined($channelA);
+        my $channelB    = $data{$address}{channelB};
+        $channelB       = 'NA' unless defined($channelB);
+        $output        .= "name: $name\naddress: $address\ntype: $type\nchannelA: $channelA\nchannelB: $channelB\nage: $age\nRawAge: $rawage\nmaster: $master$channel\nConfigType: $configtype\n";
+
+      } elsif ($type eq 'rain') {
+        my $rain        = $data{$address}{$type};
+        $rain           = 'NA' unless defined($rain);
+        $output        .= "name: $name\naddress: $address\ntype: $type\n$type: $rain\nage: $age\nRawAge: $rawage\nmaster: $master$channel\nConfigType: $configtype\n";
+
       } else {
-        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n1MinuteMax: $minute\n5MinuteMax: $FiveMinute\nupdated: $time\nage: $age\nRawVoltage: $raw\nlinkdev: $linkdev$channel\nConfigType: $configtype\nMStype: $mstype\nInstantaneousCurrent: $icurrent\nCurrent1MinuteMax: $iminute\nCurrentTime: $itime\n";
+        my $temperature = $data{$address}{temperature};
+        my $mstype      = $data{$address}{mstype};
+        my $voltage     = $data{$address}{$type};
+        my $raw         = $data{$address}{raw};
+        my $icurrent    = $data{$address}{icurrent};
+
+        $temperature = 'NA' unless defined($temperature);
+        $mstype      = 'NA' unless defined($mstype);
+        $voltage     = 'NA' unless defined($voltage);
+        $raw         = 'NA' unless defined($raw);
+        $icurrent    = 'NA' unless defined($icurrent);
+
+        my $MinuteMax      = $data{$address}{MinuteMax};
+        $MinuteMax         = 'NA' unless defined($MinuteMax);
+        my $TimeMax        = 'NA';
+        if ($data{$address}{TimeMax}) {
+          $TimeMax         = time() - $data{$address}{TimeMax};
+        }
+
+        my $FiveMinuteMax  = $data{$address}{FiveMinuteMax};
+        my $FourMinuteMax  = $data{$address}{FourMinuteMax};
+        my $ThreeMinuteMax = $data{$address}{ThreeMinuteMax};
+        my $TwoMinuteMax   = $data{$address}{TwoMinuteMax};
+        my $OneMinuteMax   = $data{$address}{OneMinuteMax};
+
+        # If we don't have five minutes data DON'T give a value. It should be looked up somewhere else.
+        if ( defined($FiveMinuteMax) ) {
+          for ($FourMinuteMax, $ThreeMinuteMax, $TwoMinuteMax, $OneMinuteMax) {
+            $FiveMinuteMax = $_ if ($_ > $FiveMinuteMax);
+          }
+        } else {
+          $FiveMinuteMax   = 'NA';
+        }
+
+        my $MinuteMin      = $data{$address}{MinuteMin};
+        $MinuteMin         = 'NA' unless defined($MinuteMin);
+        my $TimeMin        = 'NA';
+        if ($data{$address}{TimeMin}) {
+          $TimeMin         = time() - $data{$address}{TimeMin};
+        }
+
+        my $FiveMinuteMin  = $data{$address}{FiveMinuteMin};
+        my $FourMinuteMin  = $data{$address}{FourMinuteMin};
+        my $ThreeMinuteMin = $data{$address}{ThreeMinuteMin};
+        my $TwoMinuteMin   = $data{$address}{TwoMinuteMin};
+        my $OneMinuteMin   = $data{$address}{OneMinuteMin};
+
+        # If we don't have five minutes data DON'T give a value. It should be looked up somewhere else.
+        if ( defined($FiveMinuteMin) ) {
+          for ($FourMinuteMin, $ThreeMinuteMin, $TwoMinuteMin, $OneMinuteMin) {
+            $FiveMinuteMin = $_ if ($_ < $FiveMinuteMin);
+          }
+        } else {
+          $FiveMinuteMin   = 'NA';
+        }
+
+        $output .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n$type: $voltage\n";
+        $output .= "1MinuteMax: $MinuteMax\n1MinuteMaxAge: $TimeMax\n5MinuteMax: $FiveMinuteMax\n";
+        $output .= "1MinuteMin: $MinuteMin\n1MinuteMinAge: $TimeMin\n5MinuteMin: $FiveMinuteMin\n";
+        $output .= "age: $age\nRawAge: $rawage\nRawVoltage: $raw\nInstantaneousCurrent: $icurrent\n";
+        $output .= "master: $master$channel\nConfigType: $configtype\nMStype: $mstype\n";
+
       }
       return $output;
     }
@@ -1397,10 +1928,18 @@ EOF
 
 
 sub RecordRRDs {
+  my $tid = threads->tid();
+  logmsg(3, "Starting RecordRRDs thread.");
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping RecordRRDs thread.");
+    threads->exit();
+  };
+
   my @addresses;
-  my ($address, $name, $type, $temperature, $minute, $iminute, $age, $rrdage);
-  my ($rrdfile, $rrderror, $updatetime);
+  my ($address, $name, $type, $age, $rrdage);
+  my ($rrdcmd, $rrdfile, $rrderror, $updatetime, $ds0, $ds1);
   while(1) {
+    sleep (60 - (time() % 60));		# update once per minute and give some time for the first data
     @addresses = ();
     foreach my $LinkDev (keys(%addresses)) {
       (@addresses) = (@addresses, @{$addresses{$LinkDev}});
@@ -1408,7 +1947,7 @@ sub RecordRRDs {
 
     logmsg (3, "Updating RRDs");
 
-    $updatetime = int(time()/60) * 60;		# Round off to previous minute mark
+    $updatetime = time();
 
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
@@ -1417,94 +1956,154 @@ sub RecordRRDs {
       $type        = $data{$address}{type};
       next if ($type eq 'ds2401');
 
-      $temperature = $data{$address}{temperature};
-      $minute      = $data{$address}{minute};
-      $minute      = $data{$address}{$type} if ( ($type eq 'ds2423') or ($type eq 'rain') or ($type =~ /^depth[0-9]+$/) );
-      $iminute     = $data{$address}{iminute};
+      $rrdage    = 0;
+      if (defined($data{$address}{rrdage})) {
+        $rrdage    = $data{$address}{rrdage};
+      }
+      if (($updatetime - $rrdage) < 50) {
+        logmsg 1, "ERROR for $name: last update to RRD less than 50s ago (".($updatetime - $rrdage)."s)";
+        next;
+      }
 
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
       $type        = 'temperature' if ( ($type eq 'ds18b20') || ($type eq 'ds1820') );
 
-      $temperature = 'U' unless defined($temperature);
-      $minute      = 'U' unless defined($minute);
-      $iminute     = 'U' unless defined($iminute);
-      if (defined($data{$address}{rrdage})) {
-        $rrdage    = $data{$address}{rrdage};
-      } else {
-        $rrdage    = 0;
-      }
-      if (($updatetime - $rrdage) < 60) {
-        logmsg 1, "ERROR last update to RRD for $name less than 60s ago (".($updatetime - $rrdage)."s)";
-        next;
-      }
-      if (defined($data{$address}{age})) {
-        $age       = time - $data{$address}{age};
-        if ($age > 60) {
-          logmsg 1, "Data age RRD for $name is > 60s ($age). Setting value as undefined unless it is a rain sensor!";
-          unless ($type eq 'rain') {
-            $temperature = 'U';
-            $minute      = 'U';
-            $iminute     = 'U';
-          }
-        }
-      } else {
-        $temperature = 'U';
-        $minute      = 'U';
-        $iminute     = 'U';
-      }
       $rrdfile = "$RRDsDir/" . lc($name) . ".rrd";
 
-      if (-w $rrdfile) {
-        my $rrdcmd = "$updatetime:$temperature:$minute:$iminute";
-        $rrdcmd = "$updatetime:$minute"			if ($type eq 'rain');
-        $rrdcmd = "$updatetime:$temperature"		if ($type eq 'temperature');
-        $rrdcmd = "$updatetime:$temperature:$minute"	if ($type eq 'humidity');
-        logmsg 4, "RRD for $name: $rrdcmd";
-        RRDs::update ($rrdfile, "$rrdcmd");
-        $rrderror=RRDs::error;
-        if ($rrderror) {
-          logmsg 1, "ERROR while updating RRD file for $name: $rrderror";
-        } else {
-          $data{$address}{rrdage} = $updatetime;
-        }
-      } else {
-        my $rrdtype = 'GAUGE';
-        $rrdtype = 'COUNTER' if ($type eq 'rain');
-
+      if (! -w $rrdfile) {
         my @rrdcmd = ($rrdfile, "--step=60");
 
-        @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300")	unless ($type eq 'rain');
-        @rrdcmd = (@rrdcmd, "DS:${type}:${rrdtype}:300:U:300")	unless ($type eq 'temperature');
-        @rrdcmd = (@rrdcmd, "DS:icurrent:GAUGE:300:U:1024")	unless ( ($type eq 'rain') || ($type eq 'temperature') || ($type eq 'humidity') );
+        if ($type eq 'temperature') {
+          @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300");
+        } elsif ($type eq 'rain') {
+          @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:300");
+        } elsif ($type eq 'ds2423') {
+          @rrdcmd = (@rrdcmd, "DS:channelA:COUNTER:300:U:300");
+          @rrdcmd = (@rrdcmd, "DS:channelB:COUNTER:300:U:300");
+        } else {
+          @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300");
+          @rrdcmd = (@rrdcmd, "DS:${type}:GAUGE:300:U:300");
+        }
 
         @rrdcmd = (@rrdcmd, 
           "RRA:MIN:0.5:1:4000", "RRA:MIN:0.5:30:800", "RRA:MIN:0.5:120:800", "RRA:MIN:0.5:1440:800",
           "RRA:MAX:0.5:1:4000", "RRA:MAX:0.5:30:800", "RRA:MAX:0.5:120:800", "RRA:MAX:0.5:1440:800",
           "RRA:AVERAGE:0.5:1:4000", "RRA:AVERAGE:0.5:30:800", "RRA:AVERAGE:0.5:120:800", "RRA:AVERAGE:0.5:1440:800"
-	);
+        );
 
         # Create RRD file
         logmsg (1, "Creating $rrdfile");
         RRDs::create (@rrdcmd);
 
         $rrderror=RRDs::error;
-        logmsg (1, "ERROR while creating/updating RRD file for $name: $rrderror") if $rrderror;
+        logmsg (1, "ERROR while creating/updating RRD file for $name: $rrderror (@rrdcmd)") if $rrderror;
+        next;	# can't update RRD file until next time
+      }
+
+      if ($type eq 'temperature') {
+        $ds0 = $data{$address}{temperature};
+      } elsif ($type eq 'rain') {
+        $ds0 = $data{$address}{rain};
+      } elsif ($type eq 'ds2423') {
+        $ds0 = $data{$address}{channelA};
+        $ds1 = $data{$address}{channelB};
+      } else {
+        $ds0 = $data{$address}{temperature};
+        if ( $data{$address}{TimeMax} < $updatetime) {	# data collection thread may have already started the new minute
+          $ds1 = $data{$address}{MinuteMax};		# Has NOT started yet
+        } else {
+          $ds1 = $data{$address}{OneMinuteMax};		# Has started already, use the last minutes result
+        }
+        $ds1 = $data{$address}{$type} if ($type eq 'depth');
+      }
+
+      $ds0 = 'U' unless defined($ds0);
+      $ds1 = 'U' unless defined($ds1);
+
+      if (defined($data{$address}{age})) {
+        $age       = time - $data{$address}{age};
+        if ($age > 60) {
+          if ($type eq 'rain') {
+            logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Using last known value as a rain sensor.";
+          } else {
+            logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Setting value to undefined.";
+            $ds0 = 'U';
+            $ds1 = 'U';
+          }
+        }
+      } else {
+        $ds0 = 'U';
+        $ds1 = 'U';
+      }
+
+      if ($type eq 'temperature') {
+        $rrdcmd = "$updatetime:$ds0";
+      } elsif ($type eq 'rain') {
+        $rrdcmd = "$updatetime:$ds0";
+      } elsif ($type eq 'ds2423') {
+        $rrdcmd = "$updatetime:$ds0:$ds1";
+      } else {
+        $rrdcmd = "$updatetime:$ds0:$ds1";
+      }
+      logmsg 4, "RRD for $name: $rrdcmd";
+      RRDs::update ($rrdfile, "$rrdcmd");
+      $rrderror=RRDs::error;
+      if ($rrderror) {
+        logmsg 1, "ERROR updating RRD file for $name: $rrderror";
+      } else {
+        $data{$address}{rrdage} = $updatetime;
       }
     }
     logmsg (3, "Finished updating RRDs");
-    sleep 60;
+    sleep 1;	# this gets us out of the first second of each minute
   }
 }
 
+sub monitor_threadstatus {
+  my $tid = threads->tid();
+  logmsg(4, "Starting monitor_threadstatus thread.");
+  $SIG{'KILL'} = sub {
+    logmsg(4, "Stopping monitor_threadstatus thread.");
+    threads->exit();
+  };
+
+  sleep 1;		# give the other threads a second to get started
+  while(1) {
+    foreach my $thread (keys(%threads)) {
+      if (! $threads{$thread}->is_running() ) {
+        my $error = $threads{$thread}->error();
+        if (defined($error)) {
+          chomp($error);
+          my $tid = $threads{$thread}->tid();
+          logmsg (1, "ERROR: Thread '$thread' terminated: '$error'");
+        } else {
+          logmsg (1, "ERROR: Thread '$thread' has exited without being cleaned up.");
+        }
+        delete $threads{$thread};
+        $MastersData{$thread}{SearchTime} = "thread died";
+      }
+    }
+    sleep 1;
+  }
+}
+
+
 sub monitor_agedata {
+  my $tid = threads->tid();
+  logmsg(4, "Starting monitor_agedata thread.");
+  $SIG{'KILL'} = sub {
+    logmsg(4, "Stopping monitor_agedata thread.");
+    threads->exit();
+  };
+
   my $age;
   sleep 1;		# give the other threads a second to get started
   while(1) {
-    foreach my $LinkDev (@LinkHubs,@LinkTHs) {
+    foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs) {
       $age = (time() - $agedata{$LinkDev});
       logmsg (1,"Age data for $LinkDev: $age seconds");
-      if ($age > 5) {
+      if ($age > 15) {
         logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale.");
         $threads{$LinkDev}->kill('HUP');
       }
@@ -1514,10 +2113,151 @@ sub monitor_agedata {
 }
 
 
+sub ParseConfigFile {
+  $LogFile = '/var/log/1wired/1wired.log';
+  $DeviceFile = '/etc/1wired/devices';
+  $PidFile = '';
+  $ListenPort = 2345;
+  @LinkHubs = ();
+  @LinkTHs = ();
+  @MQTTSubs = ();
+  $SleepTime = 0;
+  $RunAsDaemon = 1;
+  $SlowDown = 0;
+  $LogLevel = 5;
+  $UseRRDs = 0;
+  $RRDsDir = '/var/1wired';
+  $AutoSearch = 1;
+  $ReSearchOnError = 1;
+  $UpdateMSType = 0;
+
+  my ($option, $value);
+  open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
+  while (<CONFIG>) {
+    chomp;
+    s/\w*#.*//;
+    next if (m/^\s*$/);
+    if (m/^([A-Za-z0-9]+)\s*=\s*(.+)$/) {
+      $option = $1;
+      $value = $2;
+      $value =~ s/\s*$//;
+      if ($option eq 'LogFile') {
+        $LogFile = $value;
+      } elsif ($option eq 'DeviceFile') {
+        $DeviceFile = $value;
+      } elsif ($option eq 'PidFile') {
+        $PidFile = $value;
+      } elsif ($option eq 'MQTTSubs') {
+        @MQTTSubs = split(/,\s*/, $value);
+      } elsif ($option eq 'LinkTHs') {
+        @LinkTHs = split(/,\s*/, $value);
+      } elsif ($option eq 'LinkHubs') {
+        @LinkHubs = split(/,\s*/, $value);
+      } elsif ($option eq 'ListenPort') {
+        if ($value =~ m/^\d+$/) {
+          if ($ListenPort <= 65535 && $ListenPort > 1024) {
+            $ListenPort = $value;
+          } else {
+            die "Port defined in config file ($ListenPort) is not within the range 1025-65535. Exiting.\n";
+          }
+        } else {
+          $ListenPort = $value;
+          #die "Port defined in config file ($ListenPort) is not a number. Exiting.\n";		### If this isn't a UNIX system then this should fail
+        }
+      } elsif ($option eq 'LogLevel') {
+        if ($value =~ m/^\d+$/) {
+          if ($LogLevel <= 5 && $LogLevel >= 0) {
+            $LogLevel = $value;
+          } else {
+            print STDERR "LogLevel defined in config file ($value) is not within the range 0-5. Using default ($LogLevel).\n";
+          }
+        } else {
+          print STDERR "LogLevel defined in config file ($value) is not a number. Using default ($LogLevel).\n";
+        }
+      } elsif ($option eq 'SlowDown') {
+        if ($value =~ m/^\d+$/) {
+          $SlowDown = $value;
+        } else {
+          print STDERR "SlowDown value defined in config file ($value) is not a number. Using default ($SlowDown).\n";
+        }
+      } elsif ($option eq 'AutoSearch') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          if ($value =~ m/^(0|false|no)$/i) {
+            $AutoSearch = 0;
+          } else {
+            $AutoSearch = 1;
+          }
+        } else {
+          print STDERR "AutoSearch value defined in config file ($value) is not valid. Using default ($AutoSearch).\n";
+        }
+      } elsif ($option eq 'UpdateMSType') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          if ($value =~ m/^(1|true|yes)$/i) {
+            $UpdateMSType = 1;
+          } else {
+            $UpdateMSType = 0;
+          }
+        } else {
+          print STDERR "UpdateMSType value defined in config file ($value) is not valid. Using default ($UpdateMSType).\n";
+        }
+      } elsif ($option eq 'ReSearchOnError') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          if ($value =~ m/^(0|false|no)$/i) {
+            $ReSearchOnError = 0;
+          } else {
+            $ReSearchOnError = 1;
+          }
+        } else {
+          print STDERR "ReSearchOnError value defined in config file ($value) is not valid. Using default ($ReSearchOnError).\n";
+        }
+      } elsif ($option eq 'SleepTime') {
+        if ($value =~ m/^\d+(\.\d+|)$/) {
+          if (($value <= 2) && ($value >= 0)) {
+            $SleepTime = $value;
+          } else {
+            print STDERR "SleepTime defined in config file ($value) is not within the range 0-2. Using default ($SleepTime).\n";
+          }
+        } else {
+          print STDERR "SleepTime defined in config file ($value) is not a number. Using default ($SleepTime).\n";
+        }
+      } elsif ($option eq 'UseRRDs') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          if ($value =~ m/^(1|true|yes)$/i) {
+            $UseRRDs = 1;
+          } else {
+            $UseRRDs = 0;
+          }
+        } else {
+          print STDERR "UseRRDs value defined in config file ($value) is not valid. Using default ($UseRRDs).\n";
+        }
+      } elsif ($option eq 'RRDsDir') {
+        $RRDsDir = $value;
+      } elsif ($option eq 'RunAsDaemon') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          $RunAsDaemon = 0 if ($value =~ m/^(0|false|no)$/i);
+        } else {
+          print STDERR "RunAsDaemon value defined in config file ($value) is not valid. Using default ($RunAsDaemon).\n";
+        }
+      } elsif ($option eq 'StateFile') {
+        # Option not used by 1wired but possibly by other programs
+      } else {
+        print STDERR "Unknown option in config file: \"$option\"\n";
+      }
+    } else {
+      print STDERR "Unrecognised line in config file: \"$_\"\n";
+    }
+  }
+  close(CONFIG);
+  $option = undef;
+  $value = undef;
+} ### END ParseDeviceFile
+
+
 sub ParseDeviceFile {
   my $errors = 0;
+  my %ListedDevices;
   unless (open(DEVICES, '<', $DeviceFile)) {
-    logmsg 1, "Can't open devices file ($DeviceFile): $!";
+    logmsg 1, "ERROR: Can't open devices file ($DeviceFile): $!";
     return;
   }
   while (<DEVICES>) {
@@ -1530,6 +2270,7 @@ sub ParseDeviceFile {
       }
       $deviceDB{$1}{name} = $2;
       $deviceDB{$1}{type} = $3;
+      $ListedDevices{$1} = $2;
 
       if (! defined($data{$1})) {	# Check this seperately as assigning $deviceDB to $data otherwise if this is being run from a SIGHUP would cause existing values in $data to be lost
         $data{$1} = &share( {} );
@@ -1537,14 +2278,21 @@ sub ParseDeviceFile {
       $data{$1}{name} = $2;
       $data{$1}{type} = $3;
     } else {
-      logmsg 1, "Unrecognised line in devices file:\n$_";
+      logmsg 1, "ERROR: Unrecognised line in devices file: '$_'";
       $errors = 1;
     }
   }
   close(DEVICES);
-  logmsg 1, "Couldn't parse devices file ($DeviceFile)." if ($errors);
-  if (! keys(%deviceDB)) {
-    logmsg 1, "Warning: No devices defined in $DeviceFile\n";
+  logmsg 1, "ERROR: Couldn't parse devices file ($DeviceFile)." if ($errors);
+  if (! keys(%ListedDevices)) {
+    logmsg 1, "WARNING: No devices defined in $DeviceFile";
+  }
+  foreach ( keys(%deviceDB) ) {
+    if (! defined($ListedDevices{$_}) ) {
+      logmsg 2, "$_ ($deviceDB{$_}{name}) no longer listed in $DeviceFile";
+      delete $deviceDB{$_};
+      $data{$_}{name} = $_;
+    }
   }
 }
 
@@ -1553,11 +2301,11 @@ sub LinkConnect {
   my $LinkDev = shift;
   my $socket;
   my $retry = 0;
-  logmsg 4, "Connecting to $main::LinkType $LinkDev";
+  logmsg 4, "Connecting to $main::MasterType $LinkDev";
 
   $socket = undef;
   while (! $socket) {
-    if ($main::LinkType eq 'LinkHubE') {
+    if ($main::MasterType eq 'LinkHubE') {
       $socket = IO::Socket::INET->new (
 		PeerAddr => $LinkDev,
 		PeerPort => '10001',
@@ -1568,7 +2316,7 @@ sub LinkConnect {
       unless ($socket) {
         $socket=undef;
       }
-    } elsif ($main::LinkType eq 'LinkSerial') {
+    } elsif ($main::MasterType eq 'LinkSerial') {
       $socket=Device::SerialPort->new($LinkDev);
       if ($socket) {
         $socket->baudrate(9600)		|| undef $socket;
@@ -1587,7 +2335,7 @@ sub LinkConnect {
     last if ($socket);
     $retry++;
     if ($retry > 5) {
-      logmsg 2, "Couldn't connect to $LinkDev after 5 retries: $!";
+      logmsg 1, "Couldn't connect to $LinkDev after 5 retries: $!";
       last;
     }
 
@@ -1597,7 +2345,7 @@ sub LinkConnect {
   if ($SlowDown) {
     logmsg 5, "Connected to $LinkDev" if ($socket);
   } else {
-    logmsg 1, "Connected to $LinkDev" if ($socket);
+    logmsg 3, "Connected to $LinkDev" if ($socket);
   }
   return $socket;
 }
@@ -1606,25 +2354,25 @@ sub LinkData {
   my $send = shift;
   my $returned;
   my $tmp;
-  if ($main::LinkType eq 'LinkHubE') {
+  if ($main::MasterType eq 'LinkHubE') {
     if (defined($main::socket)) {
       $main::socket->send($send);
       sleep $SleepTime;
       if ($main::select->can_read(1)) {
         $main::socket->recv($returned,128);
       } else {
-        logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
+        logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
       }
     }
-  } elsif ($main::LinkType eq 'LinkSerial') {
+  } elsif ($main::MasterType eq 'LinkSerial') {
     if (defined($main::socket)) {
       $main::socket->write($send);
       sleep $SleepTime;
       ($tmp,$returned) = $main::socket->read(1023);
       if (!defined($returned)) {
-        logmsg 1, "Couldn't read from $main::LinkDev. Closing connection.";
+        logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
       }
@@ -1653,35 +2401,35 @@ sub CheckData {
   my $returned = shift;
   if (defined($returned)) {
     if ($returned eq 'N') {
-      logmsg 2, "$main::LinkDev reported that it has no devices. Scheduling a search." unless ($LinkDevData{$main::LinkDev}{SearchNow});
-      $LinkDevData{$main::LinkDev}{SearchNow} = 1;
-      $LinkDevData{$main::LinkDev}{DataError} = 0;
+      logmsg 2, "WARNING on $main::LinkDev: reported that it has no devices. Scheduling a search." unless ($MastersData{$main::LinkDev}{SearchNow});
+      $MastersData{$main::LinkDev}{SearchNow} = 1;
+      $MastersData{$main::LinkDev}{DataError} = 0;
       return 1;		# This means that there aren't any devices on the bus which is not a data error
     }
     if ($returned eq 'S') {
-      logmsg 2, "$main::LinkDev reported a short on the bus.";
-      $LinkDevData{$main::LinkDev}{DataError}++;
+      logmsg 1, "ERROR on $main::LinkDev: reported a short on the bus.";
+      $MastersData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq 'E') {
-      logmsg 2, "$main::LinkDev reported an error processing the command.";
-      $LinkDevData{$main::LinkDev}{DataError}++;
+      logmsg 1, "ERROR on $main::LinkDev: reported an error processing the command.";
+      $MastersData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq '') {
-      logmsg 1, "$main::LinkDev returned no data.";
-      $LinkDevData{$main::LinkDev}{DataError}++;
+      logmsg 1, "ERROR on $main::LinkDev: no data returned.";
+      $MastersData{$main::LinkDev}{DataError}++;
       return 0;
     }
     if ($returned eq 'P') {
-      $LinkDevData{$main::LinkDev}{DataError} = 0;
+      $MastersData{$main::LinkDev}{DataError} = 0;
       return 1;		# This should only be after a reset but any other time the returned data will be checked outside this subroutine anyway
     }
   } else {
-    $LinkDevData{$main::LinkDev}{DataError}++;
+    $MastersData{$main::LinkDev}{DataError}++;
     return 0;
   }
-  $LinkDevData{$main::LinkDev}{DataError} = 0;
+  $MastersData{$main::LinkDev}{DataError} = 0;
   return 1;
 }
 
@@ -1696,7 +2444,7 @@ sub QueryMSType {
   while (1) {
     $retry++;
     if ($retry > 5) {
-      logmsg 1, "Failed to read type of $main::LinkDev:$name.";
+      logmsg 2, "ERROR on $main::LinkDev:$name: Failed to read multisensor type.";
       return 0;
     }
 
@@ -1704,11 +2452,11 @@ sub QueryMSType {
     # byte mode, match rom, address, recall memory page 03 to scratch pad
     $returned = LinkData("b55${address}B803\n");
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting recall memory page 03 to scratch pad on $main::LinkDev:$data{$address}{name}.";
+      logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting recall memory page 03 to scratch pad.";
       next;
     }
     if ($returned ne "55${address}B803") {
-      logmsg 3, "ERROR on $main::LinkDev:$data{$address}{name}: Sent b55${address}B803 command; got: $returned";
+      logmsg 3, "ERROR on $main::LinkDev:$name: Sent b55${address}B803 command; got: $returned";
       next;
     }
 
@@ -1716,20 +2464,20 @@ sub QueryMSType {
     # byte mode, match rom, address, read scratch pad for memory page 03
     $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");
     if (! CheckData($returned)) {
-      logmsg 2, "Error requesting reading scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+      logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting reading scratch pad for memory page 03.";
       next;
     }
 
     if ( (length($returned) != 40) || (! ($returned =~ s/^55${address}BE03([A-F0-9]{18})$/$1/)) ) {
-      logmsg 3, "ERROR: Query of MS type for $main::LinkDev:$name returned: $returned";
+      logmsg 3, "ERROR on $main::LinkDev:$name: Query of MS type returned: $returned";
       next;
     }
     if ( $returned =~ m/^F{18}$/ ) {
-      logmsg 4, "ERROR: Got only F's on query of MS type for $main::LinkDev:$name.";
+      logmsg 4, "ERROR on $main::LinkDev:$name: Got only F's on query of MS type.";
       next;
     }
     if (! CRCow($returned) ) {
-      logmsg 1, "CRC error on query of MS type for $main::LinkDev:$name";
+      logmsg 1, "ERROR on $main::LinkDev:$name: CRC failed on query of MS type.";
       next;
     }
     $returned =~ s/[0-9A-F]{16}$//;		# we only need the first byte (2 chars)
@@ -1741,7 +2489,7 @@ sub QueryMSType {
     }
     if ($data{$address}{type} eq 'query') {
       $data{$address}{type} = $data{$address}{mstype};
-      logmsg 2, "$name found to be type $returned (" . $data{$address}{mstype} . ")";
+      logmsg 2, "INFO: $name found to be type $returned (" . $data{$address}{mstype} . ")";
     }
     return 1;
   }
@@ -1758,14 +2506,14 @@ sub ChangeMSType {
     $type = $_ if ($mstype{$_} eq $data{$address}{type});
   }
   if ($type) {
-    logmsg 2, "Attempting to change $name type to ".$data{$address}{type}.".";
+    logmsg 2, "INFO: Attempting to change $name multisensor type to ".$data{$address}{type}.".";
 
     my $retry = 0;
 
     while (1) {
       $retry++;
       if ($retry > 5) {
-        logmsg 1, "Failed to change $main::LinkDev:$name type.";
+        logmsg 1, "ERROR on $main::LinkDev:$name: Failed to change multisensor type.";
         return 0;
       }
 
@@ -1773,7 +2521,7 @@ sub ChangeMSType {
 
       $returned = LinkData("b55${address}4E03${type}\n");	# byte mode, match rom, address, write scratch 4E, register 03, value $type
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting writing scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting writing scratch pad for memory page 03.";
         next;
       }
       sleep 0.01;						# wait 10ms
@@ -1781,7 +2529,7 @@ sub ChangeMSType {
 
       $returned = LinkData("b55${address}BE03FF\n");		# byte mode, match rom, address, read scratch BE, register 03
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting reading scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting reading scratch pad for memory page 03.";
         next;
       }
       next if ($returned ne "55${address}BE03${type}");
@@ -1789,7 +2537,7 @@ sub ChangeMSType {
       next if (! Reset());
       $returned = LinkData("b55${address}4803\n");		# byte mode, match rom, address, copy scratch 48, register 03
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting copying scratch pad for memory page 03 on $main::LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting copying scratch pad for memory page 03.";
         next;
       }
       sleep 0.01;						# wait 10ms
@@ -1797,21 +2545,21 @@ sub ChangeMSType {
 
       $returned = LinkData("b55${address}B803\n");		# byte mode, match rom, address, recall memory page 03 to scratch pad
       if (! CheckData($returned)) {
-        logmsg 2, "Error requesting recalling memory page 03 to scratch pad on $main::LinkDev:$data{$address}{name}.";
+        logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting recalling memory page 03 to scratch pad.";
         next;
       }
       if ($returned ne "55${address}B803") {
-        logmsg 3, "ERROR on $main::LinkDev:$data{$address}{name}: Sent b55${address}B803 command; got: $returned";
+        logmsg 3, "ERROR on $main::LinkDev:$name: Sent b55${address}B803 command; got: $returned";
         next;
       }
       sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      logmsg 1, "Changed $name type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
+      logmsg 1, "INFO: Changed $name multisensor type from " . $data{$address}{mstype} . " to " . $data{$address}{type};
       return 1;
     }
   } else {
-    logmsg 1, "Unkown type $data{$address}{type}. Cannot update type for $data{$address}{name}.";
+    logmsg 1, "ERROR for $name: Unkown multisensor type $data{$address}{type}. Cannot update.";
     return 0;
   }
 }
@@ -1876,3 +2624,47 @@ sub CRC16 {
     return 0;
   }
 }
+
+
+sub cleanshutdown {
+  logmsg(1, "SHUTDOWN: Shutting down.");
+  foreach my $thread (keys(%threads)) {
+    logmsg(3, "SHUTDOWN: Active thread $thread ".$threads{$thread}->tid() );
+  }
+
+  $threads{threadstatus}->kill('KILL')->join();	# Get rid of this first so it doesn't report uselessly
+  delete $threads{threadstatus};
+
+  $threads{RRDthread}->kill('KILL')->detach();	# This could be in a long sleep so just detach
+  delete $threads{RRDthread};
+
+  foreach my $thread (threads->list()) {
+    $thread->kill('KILL');
+  }
+  sleep 1;
+
+  while (keys(%threads)) {
+    foreach my $thread (keys(%threads)) {
+      if ($threads{$thread}->is_running() ) {
+        logmsg(1, "SHUTDOWN: thread $thread ".$threads{$thread}->tid()." still running");
+      } else {
+        logmsg(1, "SHUTDOWN: thread $thread finished.");
+        $threads{$thread}->join();
+        delete $threads{$thread};
+      }
+    }
+    sleep 1;
+  }
+
+  logmsg 3, "SHUTDOWN: Closing socket $ListenPort";
+  close ($server_sock);
+  if (! ($ListenPort =~ m/^\d+$/)) {
+    logmsg(3, "SHUTDOWN: Removing socket on $ListenPort");
+    unlink "$ListenPort";
+  }
+  if ($PidFile) {
+    unlink $PidFile;
+  }
+  exit 0;
+}
+
