@@ -1209,8 +1209,9 @@ sub monitor_mqttsub {
         }
       }
     }
-    logmsg 1, "ERROR on $MQTTSub: Connection closed.";
     close(RETURNED);
+    logmsg 1, "ERROR on $MQTTSub: Connection closed. Sleeping 1 second before retrying.";
+    sleep 1;
   }
 }
 
