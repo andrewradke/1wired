@@ -172,6 +172,7 @@ if ($ListenPort =~ m/^\d+$/) {
 					Listen => 5,
 					);
   die "Cannot create socket on $ListenPort: $!" unless $server_sock;
+  chmod 0770, "$ListenPort";
 }
 
 logmsg 1, "Listening on socket $ListenPort";

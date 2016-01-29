@@ -21,9 +21,11 @@
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 DESC="Description of the service"
 NAME=1wired
+USER=onewired
+RUNDIR=/var/run/$NAME
 DAEMON=/usr/local/sbin/1wired.pl
 DAEMON_ARGS=""
-PIDFILE=/var/run/$NAME/$NAME.pid
+PIDFILE="$RUNDIR/$NAME.pid"
 SCRIPTNAME=/etc/init.d/$NAME
 
 # Exit if the package is not installed
@@ -48,13 +50,14 @@ do_start()
 	#   0 if daemon has been started
 	#   1 if daemon was already running
 	#   2 if daemon could not be started
-	#start-stop-daemon --start --quiet --pidfile $PIDFILE --exec $DAEMON -- $DAEMON_ARGS || return 2
-	mkdir /var/run/1wired >/dev/null 2>&1
-	chown 1wired /var/run/1wired
-	#telnet localhost 10001
-	su 1wired -c $DAEMON
-	sleep 1
-	chmod g+rw /var/run/1wired/socket
+
+	PIDOF=$(pidofproc -p $PIDFILE $DAEMON)
+	if [ -n "$PIDOF" ] && [ -e "$PIDFILE" ] && [ "$PIDOF" = "$(cat $PIDFILE)" ] ; then
+		log_action_msg "$NAME already running (pid: $PIDOF)"
+		return 1
+	fi
+	install -d --mode=0755 -o $USER "$RUNDIR" || return 2
+	start-stop-daemon --start --chuid $USER --pidfile $PIDFILE --exec $DAEMON -- $DAEMON_OPTS || return 2
 }
 
 #
@@ -135,18 +138,12 @@ case "$1" in
   start)
 	[ "$VERBOSE" != no ] && log_daemon_msg "Starting $DESC" "$NAME"
 	do_start
-	case "$?" in
-		0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
-		2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
-	esac
+	log_end_msg $?
 	;;
   stop)
 	[ "$VERBOSE" != no ] && log_daemon_msg "Stopping $DESC" "$NAME"
 	do_stop
-	case "$?" in
-		0|1) [ "$VERBOSE" != no ] && log_end_msg 0 ;;
-		2) [ "$VERBOSE" != no ] && log_end_msg 1 ;;
-	esac
+	log_end_msg $?
 	;;
   reload|force-reload)
 	log_daemon_msg "Reloading $DESC" "$NAME"
@@ -171,8 +168,11 @@ case "$1" in
 		;;
 	esac
 	;;
+  status)
+	status_of_proc "$DAEMON" "$NAME" && exit 0 || exit $?
+	;;
   *)
-	echo "Usage: $SCRIPTNAME {start|stop|restart|reload|force-reload}" >&2
+	echo "Usage: $SCRIPTNAME {start|stop|status|restart|reload|force-reload}" >&2
 	exit 3
 	;;
 esac
