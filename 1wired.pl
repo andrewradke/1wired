@@ -36,7 +36,7 @@ my @threadNames : shared;
 my $ConfigFile = '/etc/1wired/1wired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -50,6 +50,20 @@ my %mstype = (
         '22' => 'depth15',
         '23' => 'pressure50',
         '24' => 'pressure100',
+
+        '30' => 'bme280',
+        '31' => 'bmp280',
+        '32' => 'dht22',
+        '33' => 'bmp180',
+        '34' => 'uvm30a',
+    );
+
+my %ArduinoSensors = (
+	'bme280' => { 'sensor0' => 'temperature', 'sensor1' => 'pressure', 'sensor2' => 'humidity' },
+	'bmp280' => { 'sensor0' => 'temperature', 'sensor1' => 'pressure'},
+	'dht22'  => { 'sensor0' => 'temperature', 'sensor1' => 'humidity'},
+	'bmp180' => { 'sensor0' => 'temperature', 'sensor1' => 'pressure'},
+	'uvm30a' => { 'sensor1' => 'UVindex'},
     );
 
 if ($UseRRDs) {
@@ -100,7 +114,20 @@ my @tmp;
 ParseDeviceFile();
 ### End parsing device file
 
+if ($PidFile) {
+  if (open(PID,  ">$PidFile")) {
+    print PID $$;
+    close PID;
+  } else {
+    logmsg 1, "Can't open pid file ($PidFile): $!";
+  }
+}
+
 logmsg(1, "Starting $script $version");
+if ( (sprintf '%.4d', umask) ne $umask ) {
+  umask $umask;
+}
+logmsg(1, "Using umask of '$umask' for creation of all new RRDs and logfiles");
 
 ### Beginning of monitoring threads
 my %threads : shared;
@@ -176,15 +203,6 @@ if ($ListenPort =~ m/^\d+$/) {
 }
 
 logmsg 1, "Listening on socket $ListenPort";
-
-if ($PidFile) {
-  if (open(PID,  ">$PidFile")) {
-    print PID $$;
-    close PID;
-  } else {
-    logmsg 1, "Can't open pid file ($PidFile): $!";
-  }
-}
 
 my $listener;
 
@@ -440,25 +458,31 @@ sub monitor_linkhub {
             $returned =~ m/^..(.{12})..$/;                # 48bit serial number
             $data{$returned}{ds2401} = $1;
           }
-          if ( $returned =~ m/^26/) {
-            # DS2438
-            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
+            # DS1820 or DS18S20
+            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
+            $data{$returned}{type} = 'ds1820';
+            $MastersData{$LinkDev}{ds1820} = 1;
           }
           if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
             # DS2423
             logmsg 3, "INFO: Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
+          if ( $returned =~ m/^26/) {
+            # DS2438
+            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
             # DS18B20
             logmsg 3, "INFO: Setting device $returned type to 'ds18b20'";
             $data{$returned}{type} = 'ds18b20';
           }
-          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
-            # DS1820 or DS18S20
-            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
-            $data{$returned}{type} = 'ds1820';
-            $MastersData{$LinkDev}{ds1820} = 1;
+          if ( $returned =~ m/^2A/) {
+            # Arduino, can be lots of different things. Query unless that has already been done.
+            $data{$returned}{arduino} = 'query'         unless ( defined($data{$returned}{arduino}) );
+            $data{$returned}{uptime}  = 0               unless ( defined($data{$returned}{uptime}) );
+            $data{$returned}{type}    = 'arduino-query' if     ( $data{$returned}{type} eq 'unknown');
           }
           logmsg 5, "INFO: Found $returned ($data{$returned}{name}) on $LinkDev";
         }
@@ -518,25 +542,31 @@ sub monitor_linkhub {
             $returned =~ m/^..(.{12})..$/;                # 48bit serial number
             $data{$returned}{ds2401} = $1;
           }
-          if ( $returned =~ m/^26/) {
-            # DS2438
-            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
+            # DS1820 or DS18S20
+            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
+            $data{$returned}{type} = 'ds1820';
+            $MastersData{$LinkDev}{ds1820} = 1;
           }
           if ( ($returned =~ m/^1D/) && (! ( ($data{$returned}{type} eq 'ds2423') or ($data{$returned}{type} eq 'rain') ) ) ) {
             # DS2423
             logmsg 3, "INFO: Setting device $returned type to 'ds2423'";
             $data{$returned}{type} = 'ds2423';
           }
+          if ( $returned =~ m/^26/) {
+            # DS2438
+            $data{$returned}{type} = 'query' if ($data{$returned}{type} eq 'unknown');
+          }
           if ( ($returned =~ m/^28/) && ($data{$returned}{type} ne 'ds18b20') ) {
             # DS18B20
             logmsg 3, "INFO: Setting device $returned type to 'ds18b20'";
             $data{$returned}{type} = 'ds18b20';
           }
-          if ( ($returned =~ m/^10/) && ($data{$returned}{type} ne 'ds1820') ) {
-            # DS1820 or DS18S20
-            logmsg 3, "INFO: Setting device $returned type to 'ds1820'";
-            $data{$returned}{type} = 'ds1820';
-            $MastersData{$LinkDev}{ds1820} = 1;
+          if ( $returned =~ m/^2A/) {
+            # Arduino, can be lots of different things. Query unless that has already been done.
+            $data{$returned}{arduino} = 'query'         unless ( defined($data{$returned}{arduino}) );
+            $data{$returned}{uptime}  = 0               unless ( defined($data{$returned}{uptime}) );
+            $data{$returned}{type}    = 'arduino-query' if     ( $data{$returned}{type} eq 'unknown');
           }
           logmsg 5, "INFO: Found $returned ($data{$returned}{name}) on $LinkDev";
         } else {
@@ -613,6 +643,22 @@ sub monitor_linkhub {
           }
         }
 
+        # If this is a Arduino then query it for it's type and update it if neccessary
+        if ( ($address =~ m/^2A/) && ($data{$address}{arduino} eq 'query') ) {
+          QueryArduinoType($address);
+          if ($data{$address}{arduino} eq 'query') {
+            logmsg 1, "WARNING on $LinkDev:$name: Could not determine sensor type of Arduino. Skipping device.";
+            next;
+          }
+          if ($data{$address}{type} eq 'arduino-query') {
+            $data{$address}{type} = "arduino-$data{$address}{arduino}";
+            logmsg 2, "INFO: $name reports as Arduino type " . $data{$address}{arduino} . ".";
+          } elsif ($data{$address}{type} ne "arduino-$data{$address}{arduino}") {
+            logmsg 1, "WARNING on $LinkDev:$name: Arduino type mismatch: config: $data{$address}{type}; sensor: $data{$address}{arduino}. Ignoring config.";
+            $data{$address}{type} = "arduino-$data{$address}{arduino}";
+          }
+        }
+
         if (! $data{$address}{type}) {
           logmsg 2, "WARNING on $LinkDev:$name is of an unknown multisensor type.";
           $data{$address}{type} = 'unknown';
@@ -630,7 +676,7 @@ sub monitor_linkhub {
             logmsg 1, "ERROR on $LinkDev:$name: Didn't get valid data";
             last;
           }
-          logmsg 3, "ERROR on $LinkDev:$name: Didn't get valid data, retrying... (attempt $retry)";
+          logmsg 6 - $retry, "ERROR on $LinkDev:$name: Didn't get valid data, retrying... (attempt $retry)";
           $returned = query_device($socket,$select,$address,$LinkDev);
         }
 
@@ -659,6 +705,7 @@ sub monitor_linkhub {
               }
             }
             $data{$address}{age} = time();
+
           } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
             $temperature = $returned;
             $temperature =~ s/^(....).*$/$1/;
@@ -682,6 +729,94 @@ sub monitor_linkhub {
                 next;
             }
             $data{$address}{temperature} = $temperature;
+            $data{$address}{age} = time();
+
+          } elsif ($type =~ m/^arduino-/) {
+            $data{$address}{raw} = $returned;
+
+            $returned =~ s/^(....)(.*)$/$2/;
+            $temperature = $1;
+            if ( $temperature eq 'FFFF' ) {
+              ### The temperature is at the default value and should be ignored
+              logmsg 3, "WARNING on $LinkDev:$name: (query) temperature is at the default value: discarding readings." if (defined($ArduinoSensors{$data{$address}{arduino}}{sensor0}));
+              $data{$address}{temperature} = 'NA';
+            } else {
+              #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+              $temperature =~ s/^(..)(..)$/$2$1/;
+              $temperature = hex $temperature;
+              $temperature = $temperature/10;
+              $temperature = restrict_num_decimal_digits($temperature,1);
+              $data{$address}{temperature} = $temperature;
+              $data{$address}{age} = time();
+            }
+            $returned =~ s/^(....)(.*)$/$2/;
+            $voltage = $1;
+            if ( $voltage eq 'FFFF' ) {
+              ### The sensor is at the default value and should be ignored
+              logmsg 3, "WARNING on $LinkDev:$name: (query) sensor1 is at the default value: discarding readings.";
+              $data{$address}{sensor1} = 'NA';
+            } else {
+              #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+              $voltage =~ s/^(..)(..)$/$2$1/;
+              $voltage = hex $voltage;
+              $voltage = $voltage/10;
+              $voltage = restrict_num_decimal_digits($voltage,1);
+              $data{$address}{sensor1} = $voltage;
+              $data{$address}{age} = time();
+            }
+            $returned =~ s/^(....)(.*)$/$2/;
+            $voltage = $1;
+            if ( $voltage eq 'FFFF' ) {
+              ### The sensor is at the default value and should be ignored
+              logmsg 3, "WARNING on $LinkDev:$name: (query) sensor2 is at the default value: discarding readings.";
+              $data{$address}{sensor2} = 'NA';
+            } else {
+              #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+              $voltage =~ s/^(..)(..)$/$2$1/;
+              $voltage = hex $voltage;
+              $voltage = $voltage/10;
+              $voltage = restrict_num_decimal_digits($voltage,1);
+              $data{$address}{sensor2} = $voltage;
+              $data{$address}{age} = time();
+            }
+            $returned =~ s/^(....)(.*)$/$2/;
+            $voltage = $1;
+            if ( $voltage eq 'FFFF' ) {
+              ### The sensor is at the default value and should be ignored
+              logmsg 3, "WARNING on $LinkDev:$name: (query) sensor3 is at the default value: discarding readings.";
+              $data{$address}{sensor3} = 'NA';
+            } else {
+              #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+              $voltage =~ s/^(..)(..)$/$2$1/;
+              $voltage = hex $voltage;
+              $voltage = $voltage/10;
+              $voltage = restrict_num_decimal_digits($voltage,1);
+              $data{$address}{sensor3} = $voltage;
+              $data{$address}{age} = time();
+            }
+            $returned =~ s/^(....)(.*)$/$2/;
+            $voltage = $1;
+            if ( $voltage eq 'FFFF' ) {
+              ### The sensor is at the default value and should be ignored
+              logmsg 3, "WARNING on $LinkDev:$name: (query) sensor4 is at the default value: discarding readings.";
+              $data{$address}{sensor4} = 'NA';
+            } else {
+              #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+              $voltage =~ s/^(..)(..)$/$2$1/;
+              $voltage = hex $voltage;
+              $voltage = $voltage/10;
+              $voltage = restrict_num_decimal_digits($voltage,1);
+              $data{$address}{sensor4} = $voltage;
+              $data{$address}{age} = time();
+            }
+            $returned =~ s/^(....)(.*)$/$2/;
+            $voltage = $1;
+            #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+            $voltage =~ s/^(..)(..)$/$2$1/;
+            $voltage = hex $voltage;
+            $voltage = $voltage;
+            logmsg 1, "WARNING on $LinkDev:$name: (query) Arduino rebooted, previous uptime $data{$address}{uptime} seconds." if ( $data{$address}{uptime} > $voltage );
+            $data{$address}{uptime} = $voltage;
             $data{$address}{age} = time();
 
           } else {
@@ -1302,6 +1437,51 @@ sub query_device {
       }
       return $result;
 
+    } elsif ( $data{$address}{type} =~ m/^arduino-/) {
+      return 'ERROR' if (! Reset());
+
+      # BEFFFFFFFFFFFFFFFFFFFFFF
+      # BEaabbccddeeffgghhiijjxx
+      # aa: LSB for temperature
+      # bb: MSB for temperature
+      # cc: LSB for sensor1
+      # dd: MSB for sensor1
+      # ee: LSB for sensor2
+      # ff: MSB for sensor2
+      # gg: LSB for sensor3
+      # hh: MSB for sensor3
+      # ii: LSB for sensor4
+      # jj: MSB for sensor4
+      # kk: LSB for uptime
+      # ll: MSB for uptime
+      # xx: CRC
+
+      $returned = LinkData("b55${address}BEFFFFFFFFFFFFFFFFFFFFFFFFFF\n");	# byte mode, match rom, address, read sensor values
+      if (! CheckData($returned)) {
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name} requesting read scratch pad for memory page 0.";
+        return 'ERROR';
+      }
+      if ( (length($returned) != 46) || (! ($returned =~ m/^55${address}BE[A-F0-9]{26}$/)) ) {
+        logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BEFFFFFFFFFFFFFFFFFFFFFFFFFF command; got: $returned";
+        return 'ERROR';
+      }
+      if ( $returned =~ m/^55${address}BEF{26}$/ ) {
+        logmsg 4, "ERROR on $LinkDev:$data{$address}{name}: Sent b55${address}BEFFFFFFFFFFFFFFFFFFFFFFFFFF command; got: $returned";
+        return 'ERROR';
+      }
+      if ($returned =~ s/^55${address}BE//) {
+        if (! CRCow($returned) ) {
+          # Arduino's are going to occasionally have timing issues and therefore CRC errors.
+          # As such log level 1 for these would create excessive uneccessary logs
+          logmsg 3, "ERROR on $LinkDev:$data{$address}{name}: CRC failed";
+          return 'ERROR';
+        }
+        return $returned;
+      } else {
+        logmsg 2, "ERROR on $data{$address}{name}: returned data not valid: $returned";
+        return 'ERROR';
+      }
+
     } else {
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
@@ -1445,6 +1625,7 @@ sub reload {
   my $OldAutoSearch = $AutoSearch;
   my $OldReSearchOnError = $ReSearchOnError;
   my $OldUpdateMSType = $UpdateMSType;
+  my $Oldumask = $umask;
 
   ParseConfigFile();
 
@@ -1504,6 +1685,19 @@ sub reload {
     $msg = "UpdateMSType changed from '$OldUpdateMSType' to '$UpdateMSType' (only affects devices found after this)";
     logmsg(1, $msg);
     $output .= $msg."\n";
+  }
+  if ( $Oldumask ne $umask ) {
+    if ($umask =~ m/^0[01][0-7][0-7]$/) {
+      $msg = "umask changed from '$Oldumask' to '$umask' (only affects files created after this)";
+      logmsg(1, $msg);
+      $output .= $msg."\n";
+      umask $umask;
+    } else {
+      $msg = "ERROR: umask value defined in config file '$umask' is not a valid number. Reverting to '$Oldumask'";
+      logmsg(1, $msg);
+      $output .= $msg."\n";
+      $umask = $Oldumask;
+    }
   }
 
   if ( $OldLogFile ne $LogFile ) {
@@ -1740,6 +1934,63 @@ sub value_all {
         $rain           = 'NA' unless defined($rain);
         $OutputData{$name} = sprintf "%-18s - %11s: %-10s                 (age: %3s s)  %s%s\n",             $name, $type, $rain, $age, $master, $channel;
 
+      } elsif ($type =~ m/^arduino-/) {
+        my $arduino     = $data{$address}{arduino};
+        $arduino        = 'unknown' unless defined($arduino);
+        my $raw         = $data{$address}{raw};
+        $raw            = 'NA' unless defined($raw);
+        my $uptime      = $data{$address}{uptime};
+        $uptime         = 'NA' unless defined($uptime);
+        $OutputData{$name} = sprintf "%-18s - ", $name;
+        if (defined($ArduinoSensors{$arduino}{sensor0})) {
+          my $temperature = $data{$address}{temperature};
+          if ( (defined($temperature)) && ($temperature ne 'NA') ) {
+            $temperature = sprintf "%5.1f", $temperature;
+          } else {
+            $temperature = ' NA  ';
+          }
+          $OutputData{$name} .= sprintf "temperature: %s   ", $temperature;
+        } else {
+          $OutputData{$name} .= "                     ";
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor1})) {
+          my $sensor1     = $data{$address}{sensor1};
+          if (defined($sensor1) ) {
+            $sensor1 = sprintf "%5.1f", $sensor1;
+          } else {
+            $sensor1 = ' NA  ';
+          }
+          $OutputData{$name} .= sprintf "%10s: %s", $ArduinoSensors{$arduino}{sensor1}, $sensor1;
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor2})) {
+          my $sensor2     = $data{$address}{sensor2};
+          if (defined($sensor2) ) {
+            $sensor2 = sprintf "%5.1f", $sensor2;
+          } else {
+            $sensor2 = ' NA  ';
+          }
+          $OutputData{$name} .= sprintf "%10s: %s", $ArduinoSensors{$arduino}{sensor2}, $sensor2;
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor3})) {
+          my $sensor3     = $data{$address}{sensor3};
+          if (defined($sensor3) ) {
+            $sensor3 = sprintf "%5.1f", $sensor3;
+          } else {
+            $sensor3 = ' NA  ';
+          }
+          $OutputData{$name} .= sprintf "%10s: %s", $ArduinoSensors{$arduino}{sensor3}, $sensor3;
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor4})) {
+          my $sensor4     = $data{$address}{sensor4};
+          if (defined($sensor4) ) {
+            $sensor4 = sprintf "%5.1f", $sensor4;
+          } else {
+            $sensor4 = ' NA  ';
+          }
+          $OutputData{$name} .= sprintf "%10s: %s", $ArduinoSensors{$arduino}{sensor4}, $sensor4;
+        }
+        $OutputData{$name} .= sprintf "  (age: %3s s)  %s%s\n", $age, $master, $channel;
+
       } else {
         my $temperature = $data{$address}{temperature};
         if (defined($temperature) ) {
@@ -1805,7 +2056,11 @@ sub value {
       } else {
         $channel = '';
       }
-      $configtype  = $type;
+      if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) ) {
+        $configtype  = $deviceDB{$address}{type};
+      } else {
+        $configtype  = 'NA';
+      }
       $type        =~ s/^pressure[0-9]+$/pressure/;
       $type        =~ s/^depth[0-9]+$/depth/;
 
@@ -1833,6 +2088,37 @@ sub value {
         $rain           = 'NA' unless defined($rain);
         $output        .= "name: $name\naddress: $address\ntype: $type\n$type: $rain\nage: $age\nRawAge: $rawage\nmaster: $master$channel\nConfigType: $configtype\n";
 
+      } elsif ($type =~ m/^arduino-/) {
+        my $arduino     = $data{$address}{arduino};
+        $arduino        = 'unknown' unless defined($arduino);
+        my $raw         = $data{$address}{raw};
+        $raw            = 'NA' unless defined($raw);
+        my $uptime      = $data{$address}{uptime};
+        $uptime         = 'NA' unless defined($uptime);
+        my $temperature = $data{$address}{temperature};
+        $temperature    = 'NA' unless defined($temperature);
+        $output        .= "name: $name\naddress: $address\ntype: $type\ntemperature: $temperature\n";
+        if (defined($ArduinoSensors{$arduino}{sensor1})) {
+          my $sensor1     = $data{$address}{sensor1};
+          $sensor1        = 'NA' unless defined($sensor1);
+          $output        .= "$ArduinoSensors{$arduino}{sensor1}: $sensor1\n";
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor2})) {
+          my $sensor2     = $data{$address}{sensor2};
+          $sensor2        = 'NA' unless defined($sensor2);
+          $output        .= "$ArduinoSensors{$arduino}{sensor2}: $sensor2\n";
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor3})) {
+          my $sensor3     = $data{$address}{sensor3};
+          $sensor3        = 'NA' unless defined($sensor3);
+          $output        .= "$ArduinoSensors{$arduino}{sensor3}: $sensor3\n";
+        }
+        if (defined($ArduinoSensors{$arduino}{sensor4})) {
+          my $sensor4     = $data{$address}{sensor4};
+          $sensor4        = 'NA' unless defined($sensor4);
+          $output        .= "$ArduinoSensors{$arduino}{sensor4}: $sensor4\n";
+        }
+        $output        .= "age: $age\nRawAge: $rawage\nRawData: $raw\nmaster: $master$channel\nConfigType: $configtype\nuptime: $uptime\n";
       } else {
         my $temperature = $data{$address}{temperature};
         my $mstype      = $data{$address}{mstype};
@@ -1939,7 +2225,7 @@ sub RecordRRDs {
 
   my @addresses;
   my ($address, $name, $type, $age, $rrdage);
-  my ($rrdcmd, $rrdfile, $rrderror, $updatetime, $ds0, $ds1);
+  my ($rrdcmd, $rrdfile, $rrderror, $updatetime, $ds0, $ds1, $ds2, $ds3, $ds4);
   while(1) {
     sleep (60 - (time() % 60));		# update once per minute and give some time for the first data
     @addresses = ();
@@ -1977,12 +2263,34 @@ sub RecordRRDs {
         my @rrdcmd = ($rrdfile, "--step=60");
 
         if ($type eq 'temperature') {
-          @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300");
+          @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:U");
         } elsif ($type eq 'rain') {
-          @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:300");
+          @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:30");
         } elsif ($type eq 'ds2423') {
-          @rrdcmd = (@rrdcmd, "DS:channelA:COUNTER:300:U:300");
-          @rrdcmd = (@rrdcmd, "DS:channelB:COUNTER:300:U:300");
+          @rrdcmd = (@rrdcmd, "DS:channelA:COUNTER:300:U:U");
+          @rrdcmd = (@rrdcmd, "DS:channelB:COUNTER:300:U:U");
+        } elsif ($type =~ m/^arduino-/) {
+          my $sensor1name = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor1})) ? $ArduinoSensors{$data{$address}{arduino}}{sensor1} : 'sensor1';
+          my $sensor2name = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor2})) ? $ArduinoSensors{$data{$address}{arduino}}{sensor2} : 'sensor2';
+          my $sensor3name = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor3})) ? $ArduinoSensors{$data{$address}{arduino}}{sensor3} : 'sensor3';
+          my $sensor4name = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor4})) ? $ArduinoSensors{$data{$address}{arduino}}{sensor4} : 'sensor4';
+          @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:120");
+          if ($sensor1name eq 'pressure') {
+            @rrdcmd = (@rrdcmd, "DS:$sensor1name:GAUGE:300:U:1200");
+          } elsif ($sensor1name eq 'humidity') {
+            @rrdcmd = (@rrdcmd, "DS:$sensor1name:GAUGE:300:U:100");
+          } else {
+            @rrdcmd = (@rrdcmd, "DS:$sensor1name:GAUGE:300:U:U");
+          }
+          if ($sensor2name eq 'pressure') {
+            @rrdcmd = (@rrdcmd, "DS:$sensor2name:GAUGE:300:U:1200");
+          } elsif ($sensor2name eq 'humidity') {
+            @rrdcmd = (@rrdcmd, "DS:$sensor2name:GAUGE:300:U:100");
+          } else {
+            @rrdcmd = (@rrdcmd, "DS:$sensor2name:GAUGE:300:U:U");
+          }
+          @rrdcmd = (@rrdcmd, "DS:$sensor3name:GAUGE:300:U:U");
+          @rrdcmd = (@rrdcmd, "DS:$sensor4name:GAUGE:300:U:U");
         } else {
           @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:300");
           @rrdcmd = (@rrdcmd, "DS:${type}:GAUGE:300:U:300");
@@ -2010,6 +2318,12 @@ sub RecordRRDs {
       } elsif ($type eq 'ds2423') {
         $ds0 = $data{$address}{channelA};
         $ds1 = $data{$address}{channelB};
+      } elsif ($type =~ m/^arduino-/) {
+        $ds0 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor0})) ? $data{$address}{temperature} : 'U';
+        $ds1 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor1})) ? $data{$address}{sensor1} : 'U';
+        $ds2 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor2})) ? $data{$address}{sensor2} : 'U';
+        $ds3 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor3})) ? $data{$address}{sensor3} : 'U';
+        $ds4 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor4})) ? $data{$address}{sensor4} : 'U';
       } else {
         $ds0 = $data{$address}{temperature};
         if ( $data{$address}{TimeMax} < $updatetime) {	# data collection thread may have already started the new minute
@@ -2022,6 +2336,9 @@ sub RecordRRDs {
 
       $ds0 = 'U' unless defined($ds0);
       $ds1 = 'U' unless defined($ds1);
+      $ds2 = 'U' unless defined($ds2);
+      $ds3 = 'U' unless defined($ds3);
+      $ds4 = 'U' unless defined($ds4);
 
       if (defined($data{$address}{age})) {
         $age       = time - $data{$address}{age};
@@ -2032,11 +2349,17 @@ sub RecordRRDs {
             logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Setting value to undefined.";
             $ds0 = 'U';
             $ds1 = 'U';
+            $ds2 = 'U';
+            $ds3 = 'U';
+            $ds4 = 'U';
           }
         }
       } else {
         $ds0 = 'U';
         $ds1 = 'U';
+        $ds2 = 'U';
+        $ds3 = 'U';
+        $ds4 = 'U';
       }
 
       if ($type eq 'temperature') {
@@ -2045,6 +2368,8 @@ sub RecordRRDs {
         $rrdcmd = "$updatetime:$ds0";
       } elsif ($type eq 'ds2423') {
         $rrdcmd = "$updatetime:$ds0:$ds1";
+      } elsif ($type =~ m/^arduino-/) {
+        $rrdcmd = "$updatetime:$ds0:$ds1:$ds2:$ds3:$ds4";
       } else {
         $rrdcmd = "$updatetime:$ds0:$ds1";
       }
@@ -2132,6 +2457,7 @@ sub ParseConfigFile {
   $AutoSearch = 1;
   $ReSearchOnError = 1;
   $UpdateMSType = 0;
+  $umask = 0002;
 
   my ($option, $value);
   open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
@@ -2242,6 +2568,12 @@ sub ParseConfigFile {
         }
       } elsif ($option eq 'StateFile') {
         # Option not used by 1wired but possibly by other programs
+      } elsif ($option eq 'umask') {
+        if ($value =~ m/^0[01][0-7][0-7]$/) {
+          $umask = $value;
+        } else {
+          print STDERR "umask value defined in config file ($value) is not a valid number. Using default ($umask).\n";
+        }
       } else {
         print STDERR "Unknown option in config file: \"$option\"\n";
       }
@@ -2266,7 +2598,7 @@ sub ParseDeviceFile {
     chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
-    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9]+)\s*$/) {
+    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
       if (! defined($deviceDB{$1})) {
         $deviceDB{$1} = &share( {} );
       }
@@ -2354,6 +2686,7 @@ sub LinkConnect {
 
 sub LinkData {
   my $send = shift;
+  logmsg 6, "--> $send";
   my $returned;
   my $tmp;
   if ($main::MasterType eq 'LinkHubE') {
@@ -2381,6 +2714,7 @@ sub LinkData {
     }
   }
   if (defined($returned)) {
+    logmsg 6, "<-- $returned";
     $returned =~ s/[?\r\n\0]*$//;
     $returned =~ s/^\?*//;
     $returned =~ s/\xff\xfa\x2c\x6a\x60\xff\xf0//;
@@ -2403,8 +2737,7 @@ sub CheckData {
   my $returned = shift;
   if (defined($returned)) {
     if ($returned eq 'N') {
-      logmsg 2, "WARNING on $main::LinkDev: reported that it has no devices. Scheduling a search." unless ($MastersData{$main::LinkDev}{SearchNow});
-      $MastersData{$main::LinkDev}{SearchNow} = 1;
+      logmsg 2, "WARNING on $main::LinkDev: reported that it has no devices.";
       $MastersData{$main::LinkDev}{DataError} = 0;
       return 1;		# This means that there aren't any devices on the bus which is not a data error
     }
@@ -2492,6 +2825,55 @@ sub QueryMSType {
     if ($data{$address}{type} eq 'query') {
       $data{$address}{type} = $data{$address}{mstype};
       logmsg 2, "INFO: $name found to be type $returned (" . $data{$address}{mstype} . ")";
+    }
+    return 1;
+  }
+}
+
+sub QueryArduinoType {
+  my $address = shift;
+  my $returned;
+
+  my $name = $data{$address}{name};
+
+  my $retry = 0;
+
+  while (1) {
+    $retry++;
+    if ($retry > 5) {
+      logmsg 2, "ERROR on $main::LinkDev:$name: Failed to read Arduino type.";
+      return 0;
+    }
+
+    next if (! Reset());
+    # byte mode, match rom, address, read memory page 03 (like a DS2438)
+    $returned = LinkData("b55${address}BAFFFF\n");
+    if (! CheckData($returned)) {
+      logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting reading scratch pad for memory page 03.";
+      next;
+    }
+
+    if ( (length($returned) != 24) || (! ($returned =~ s/^55${address}BA([A-F0-9]{4})$/$1/)) ) {
+      logmsg 3, "ERROR on $main::LinkDev:$name: Query of Arduino type returned: $returned";
+      next;
+    }
+    if ( $returned =~ m/^F{4}$/ ) {
+      logmsg 4, "ERROR on $main::LinkDev:$name: Got only F's on query of Arduino type.";
+      next;
+    }
+    if (! CRCow($returned) ) {
+      logmsg 1, "ERROR on $main::LinkDev:$name: CRC failed on query of Arduino type.";
+      next;
+    }
+    $returned =~ s/^([0-9A-F]{2}).*/$1/;		# we only need the first byte (2 chars)
+
+    if ( defined($mstype{$returned}) ) {
+      $data{$address}{arduino} = $mstype{$returned};
+    } else {
+      $data{$address}{arduino} = 'unknown';
+    }
+    if ($data{$address}{type} eq 'query') {
+      logmsg 2, "INFO: $name reports as Arduino type $returned (" . $data{$address}{arduino} . ")";
     }
     return 1;
   }
@@ -2586,7 +2968,7 @@ sub CRCow {
 	87, 9, 235, 181, 54, 104, 138, 212, 149, 203, 41, 119, 244, 170, 72, 22,
 	233, 183, 85, 11, 136, 214, 52, 106, 43, 117, 151, 201, 74, 20, 246, 168,
 	116, 42, 200, 150, 21, 75, 169, 247, 182, 232, 10, 84, 215, 137, 107, 53
-);
+  );
 
   my $size;
   my $count;
@@ -2637,8 +3019,10 @@ sub cleanshutdown {
   $threads{threadstatus}->kill('KILL')->join();	# Get rid of this first so it doesn't report uselessly
   delete $threads{threadstatus};
 
-  $threads{RRDthread}->kill('KILL')->detach();	# This could be in a long sleep so just detach
-  delete $threads{RRDthread};
+  if ($UseRRDs) {
+    $threads{RRDthread}->kill('KILL')->detach();	# This could be in a long sleep so just detach
+    delete $threads{RRDthread};
+  }
 
   foreach my $thread (threads->list()) {
     $thread->kill('KILL');
