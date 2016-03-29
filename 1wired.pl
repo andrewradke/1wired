@@ -56,6 +56,7 @@ my %mstype = (
         '32' => 'dht22',
         '33' => 'bmp180',
         '34' => 'uvm30a',
+        '35' => 'hcsr04',
     );
 
 my %ArduinoSensors = (
@@ -64,6 +65,7 @@ my %ArduinoSensors = (
 	'dht22'  => { 'sensor0' => 'temperature', 'sensor1' => 'humidity'},
 	'bmp180' => { 'sensor0' => 'temperature', 'sensor1' => 'pressure'},
 	'uvm30a' => { 'sensor1' => 'UVindex'},
+	'hcsr04' => { 'sensor1' => 'distance'},
     );
 
 if ($UseRRDs) {
@@ -1219,7 +1221,7 @@ sub monitor_mqttsub {
           $name = $data{$address}{name};
 
           if (! ($temperature =~ m/^[0-9.]+$/) ) {
-            logmsg 1, "ERROR on $MQTTSub:$name: returned '$temperature' instead of a number.";
+            logmsg 1, "ERROR on $MQTTSub:$name: returned temperature '$temperature' instead of a number.";
             next;
           }
 
@@ -1239,6 +1241,10 @@ sub monitor_mqttsub {
             } else {
               $data{$address}{type} = 'unknown';
             }
+          }
+
+          if ( $data{$address}{type} =~ m/^depth-(\d+)$/ ) {
+            $voltage = $1 - $voltage;
           }
 
           if (! $localaddresses{$address}) {
