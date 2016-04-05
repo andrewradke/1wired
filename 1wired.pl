@@ -746,6 +746,7 @@ sub monitor_linkhub {
             $data{$address}{uptime} = $voltage if (! defined($data{$address}{uptime}) );
             if ( $data{$address}{uptime} > $voltage ) {
               logmsg 1, "WARNING on $LinkDev:$name: (query) Arduino rebooted, previous uptime $data{$address}{uptime} seconds.";
+              $data{$address}{uptime} = $voltage;
               next;	# ignore first reading after a reboot
             }
             $data{$address}{uptime} = $voltage;
