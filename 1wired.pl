@@ -736,6 +736,20 @@ sub monitor_linkhub {
           } elsif ($type =~ m/^arduino-/) {
             $data{$address}{raw} = $returned;
 
+            # Check uptime first so we can skip it if it's just rebooted
+            $returned =~ s/(....)..$//;	# last two bytes then CRC
+            $voltage = $1;
+            #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
+            $voltage =~ s/^(..)(..)$/$2$1/;
+            $voltage = hex $voltage;
+            $voltage = $voltage;
+            $data{$address}{uptime} = $voltage if (! defined($data{$address}{uptime}) );
+            if ( $data{$address}{uptime} > $voltage ) {
+              logmsg 1, "WARNING on $LinkDev:$name: (query) Arduino rebooted, previous uptime $data{$address}{uptime} seconds.";
+              next;	# ignore first reading after a reboot
+            }
+            $data{$address}{uptime} = $voltage;
+
             $returned =~ s/^(....)(.*)$/$2/;
             $temperature = $1;
             if ( $temperature eq 'FFFF' ) {
@@ -811,14 +825,6 @@ sub monitor_linkhub {
               $data{$address}{sensor4} = $voltage;
               $data{$address}{age} = time();
             }
-            $returned =~ s/^(....)(.*)$/$2/;
-            $voltage = $1;
-            #e.g.  a return value of 5701 represents 0x0157, or 343 in decimal.
-            $voltage =~ s/^(..)(..)$/$2$1/;
-            $voltage = hex $voltage;
-            $voltage = $voltage;
-            logmsg 1, "WARNING on $LinkDev:$name: (query) Arduino rebooted, previous uptime $data{$address}{uptime} seconds." if ( $data{$address}{uptime} > $voltage );
-            $data{$address}{uptime} = $voltage;
             $data{$address}{age} = time();
 
           } else {
@@ -904,6 +910,8 @@ sub monitor_linkhub {
             } else {
               $voltage = restrict_num_decimal_digits($voltage,1);
             }
+            $type        =~ s/^pressure[0-9]+$/pressure/;
+            $type        =~ s/^depth-?[0-9]+$/depth/;
             $data{$address}{$type} = $voltage;
 
             my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
