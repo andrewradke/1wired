@@ -297,10 +297,13 @@ sub monitor_linkhub {
   my $tid = threads->tid();
   our $socket;
 
+  my $returned;
+  our $select;
+
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_linkhub thread for $LinkDev.");
     Reset();
-    $main::socket->read(1023);
+    $returned = LinkData("\n");		# Discard returned reset data
     $socket->close if (defined($socket));;
     threads->exit();
   };
@@ -313,9 +316,6 @@ sub monitor_linkhub {
 
   my @addresses;
   my $count = 0;
-
-  my $returned;
-  our $select;
 
   my ($temperature, $voltage, $icurrent);
   my $address;
