@@ -50,6 +50,7 @@ my %mstype = (
         '22' => 'depth15',
         '23' => 'pressure50',
         '24' => 'pressure100',
+        '25' => 'pressure200',
 
         '30' => 'bme280',
         '31' => 'bmp280',
