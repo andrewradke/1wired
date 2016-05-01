@@ -360,7 +360,7 @@ sub monitor_linkhub {
 
     $select = IO::Select->new($socket) if ($MasterType eq 'LinkHubE');
 
-    $returned = LinkData("\n");				# Discard any existing data
+    $returned = LinkData(" \n");				# Discard any existing data, a space will return the link version, without it a timeout will occur waiting for some data
     # Do not check this data as we are not interested in it and after initial run should be empty and CheckData would return false
 
     ### Begin search for devices on LinkHub
@@ -1935,8 +1935,12 @@ sub value_all {
 
       } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
         my $temperature = $data{$address}{temperature};
-        $temperature = 'NA' unless defined($temperature);
-        $OutputData{$name} = sprintf "%-18s - temperature: %5.1f                      (age: %3s s)  %s%s\n", $name, $temperature, $age, $master, $channel;
+          if (defined($temperature)) {
+            $temperature = sprintf "%5.1f", $temperature;
+          } else {
+            $temperature = ' NA  ';
+          }
+        $OutputData{$name} = sprintf "%-18s - temperature: %s                      (age: %3s s)  %s%s\n", $name, $temperature, $age, $master, $channel;
 
       } elsif ($type eq 'ds2423') {
         my $channelA    = $data{$address}{channelA};
@@ -2702,15 +2706,19 @@ sub LinkConnect {
 
 sub LinkData {
   my $send = shift;
-  logmsg 6, "--> $send";
-  my $returned;
+  logmsg 6, "--> '$send'";
+  my $returned = '';
   my $tmp;
   if ($main::MasterType eq 'LinkHubE') {
     if (defined($main::socket)) {
       $main::socket->send($send);
       sleep $SleepTime;
-      if ($main::select->can_read(1)) {
-        $main::socket->recv($returned,128);
+      if ($main::select->can_read(1)) {			# 1 second timeout waiting for any data
+        while ($main::select->can_read(0.100)) {	# 100ms timeout waiting for extra data
+          $main::socket->recv($tmp,128);
+          $returned .= $tmp;
+          last if ($returned =~ m/.[\r\n\0]/);
+        }
       } else {
         logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection.";
         close ($main::socket) if (defined($main::socket));
@@ -2730,9 +2738,9 @@ sub LinkData {
     }
   }
   if (defined($returned)) {
-    logmsg 6, "<-- $returned";
+    logmsg 6, "<-- '$returned'";
     $returned =~ s/[?\r\n\0]*$//;
-    $returned =~ s/^\?*//;
+    $returned =~ s/^[?\r\n\0]*//;
     $returned =~ s/\xff\xfa\x2c\x6a\x60\xff\xf0//;
   } else {
     $returned = '';
