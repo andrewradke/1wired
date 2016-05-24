@@ -2142,7 +2142,7 @@ sub value_all {
 
       } elsif ($type eq 'homie') {
         $OutputData{$name} = sprintf "%-18s - ", $name;
-        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           $OutputData{$name} .= sprintf "%10s: ", $nodeid;
           if (defined($data{$address}{node}{$nodeid}{value}) ) {
             $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
@@ -2308,7 +2308,7 @@ sub value {
 
       } elsif ($type eq 'homie') {
         $output        .= "name: $name\naddress: $address\ntype: $type\n";
-        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           $output      .= $nodeid . ": ";
           $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
         }
@@ -2494,7 +2494,7 @@ sub RecordRRDs {
         } elsif ($type eq 'rain') {
           @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:30");
         } elsif ($type eq 'homie') {
-          foreach my $nodeid (sort(keys($data{$address}{node}))) {
+          foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
             if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
               @rrdcmd = (@rrdcmd, "DS:$nodeid:COUNTER:300:U:U");
             } else {
@@ -2552,7 +2552,7 @@ sub RecordRRDs {
       } elsif ($type eq 'rain') {
         $rrdcmd .= ":" . ( (defined($data{$address}{rain})) ? $data{$address}{rain} : 'U' );
       } elsif ($type eq 'homie') {
-        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
             $rrdcmd .= ":" . ( (defined($data{$address}{node}{$nodeid}{value})) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
           } else {
