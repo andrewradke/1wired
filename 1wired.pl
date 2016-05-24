@@ -36,7 +36,7 @@ my @threadNames : shared;
 my $ConfigFile = '/etc/1wired/1wired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -151,6 +151,12 @@ foreach my $MQTTSub (@MQTTSubs) {
   $addresses{$MQTTSub} = &share( [] );
   $threads{$MQTTSub} = shared_clone(threads->create(\&monitor_mqttsub, $MQTTSub));
   $threadNames[$threads{$MQTTSub}->tid] = $MQTTSub;
+}
+foreach my $HomieSub (@HomieSubs) {
+  $MastersData{$HomieSub} = &share( {} );
+  $addresses{$HomieSub} = &share( [] );
+  $threads{$HomieSub} = shared_clone(threads->create(\&monitor_homiesub, $HomieSub));
+  $threadNames[$threads{$HomieSub}->tid] = $HomieSub;
 }
 
 $threads{threadstatus} = shared_clone(threads->create(\&monitor_threadstatus));
@@ -1184,9 +1190,10 @@ sub monitor_mqttsub {
     threads->exit();
   };
 
-  my ($host, $channel);
+  my $channel;
   if (! ($MQTTSub =~ m/^([^\/]+)\/(.+)$/) ) {
-    threads->die("MQTT topic defined in config file ($MQTTSub) is not valid (.*/.*). Exiting.\n");
+    logmsg(1, "MQTT topic defined in config file ($MQTTSub) is not valid (.*/.*). Exiting.");
+    threads->exit();
   }
   logmsg 1, "Monitoring MQTT $MQTTSub";
   our $MasterType = 'MQTT';
@@ -1363,6 +1370,158 @@ sub monitor_mqttsub {
     }
     close(RETURNED);
     logmsg 1, "ERROR on $MQTTSub: Connection closed. Sleeping 1 second before retrying.";
+    sleep 1;
+  }
+}
+
+sub monitor_homiesub {
+  my $HomieSub = shift;
+  my $tid = threads->tid();
+  my $pid;
+
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping monitor_homiesub thread for $HomieSub.");
+    kill 9, $pid;
+    close(RETURNED);
+    threads->exit();
+  };
+
+  if (! ($HomieSub =~ m/^([^\/]+)\/(.+)$/) ) {
+    logmsg(1, "Homie topic defined in config file ($HomieSub) is not valid (.*/.*). Exiting.");
+    threads->exit();
+  }
+  logmsg 1, "Monitoring Homie $HomieSub";
+  our $MasterType = 'Homie';
+
+  $MastersData{$HomieSub}{channels} = 0;		# channel reporting is not relevant to Homie
+
+  my %localaddresses;
+
+  my $returned;
+
+  my ($property, $value);
+  my $address;
+  my ($type, $name);
+
+  LOOP: while (1) {
+    logmsg 4, "Connecting by $MasterType to $HomieSub";
+    while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$HomieSub") ) ) {
+      logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
+      sleep 10;						# Wait for 10 seconds before retrying
+    }
+
+    while ($returned = <RETURNED>) {
+
+      $agedata{$HomieSub} = time();
+
+      foreach my $value (split(/\r?\n/, $returned)) {
+        $value =~ s!^([^/]+)/([^/]+)/([^ ]+) !!;
+        my $topic = $1;
+        $address = $2;
+        my $key = $3;
+
+        if (! defined($data{$address})) {
+          $data{$address} = &share( {} );
+          $data{$address}{type} = 'homie';
+        }
+        if (! defined($data{$address}{node})) {
+          $data{$address}{node} = &share( {} );
+        }
+
+        $data{$address}{master} = $HomieSub;
+
+        if ( $key =~ s/^\$// ) {
+          $data{$address}{$key} = $value;
+
+          if ( $key eq "name" ) {
+            if (! $localaddresses{$address}) {
+              $localaddresses{$address} = 1;
+              logmsg 2, "Found $address ($value) on $HomieSub";
+              push (@{$addresses{$HomieSub}}, $address);
+              $MastersData{$HomieSub}{SearchTime} = time();
+            }
+          } elsif ( $key eq "uptime" ) {
+            if ( $data{$address}{uptime} > $value ) {
+              logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
+              $data{$address}{uptime} = $value;
+              next;	# ignore first reading after a reboot
+            }
+            $data{$address}{uptime} = $value;
+          } elsif ( $key eq "nodes" ) {
+            foreach my $node (split(/,/, $value)) {
+              my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
+              if (! defined($data{$address}{node}{$nodeid})) {
+                $data{$address}{node}{$nodeid} = &share( {} );
+              }
+              $data{$address}{node}{$nodeid}{type}  = $property;
+              $data{$address}{node}{$nodeid}{value} = 'NA';
+            }
+          }
+        } else {
+
+          my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
+
+          # This shouldv'e been defined when receiving the $nodes property above but check in case that hasn't been recieved.
+          if (! defined($data{$address}{node}{$nodeid})) {
+            $data{$address}{node}{$nodeid} = &share( {} );
+          }
+          $data{$address}{node}{$nodeid}{type} = $property;
+          $data{$address}{node}{$nodeid}{value} = $value;
+
+          my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
+
+          if (! defined($data{$address}{node}{$nodeid}{MinuteMax})) {
+            $data{$address}{node}{$nodeid}{MinuteMax}		= $value;
+            $data{$address}{node}{$nodeid}{TimeMax}		= time();
+          } else {
+            if ( $data{$address}{node}{$nodeid}{TimeMax} < $thisminute ) {
+              $data{$address}{node}{$nodeid}{FiveMinuteMax}	= $data{$address}{node}{$nodeid}{FourMinuteMax};
+              $data{$address}{node}{$nodeid}{FiveTimeMax}	= $data{$address}{node}{$nodeid}{FourTimeMax};
+              $data{$address}{node}{$nodeid}{FourMinuteMax}	= $data{$address}{node}{$nodeid}{ThreeMinuteMax};
+              $data{$address}{node}{$nodeid}{FourTimeMax}	= $data{$address}{node}{$nodeid}{ThreeTimeMax};
+              $data{$address}{node}{$nodeid}{ThreeMinuteMax}	= $data{$address}{node}{$nodeid}{TwoMinuteMax};
+              $data{$address}{node}{$nodeid}{ThreeTimeMax}	= $data{$address}{node}{$nodeid}{TwoTimeMax};
+              $data{$address}{node}{$nodeid}{TwoMinuteMax}	= $data{$address}{node}{$nodeid}{OneMinuteMax};
+              $data{$address}{node}{$nodeid}{TwoTimeMax}	= $data{$address}{node}{$nodeid}{OneTimeMax};
+              $data{$address}{node}{$nodeid}{OneMinuteMax}	= $data{$address}{node}{$nodeid}{MinuteMax};
+              $data{$address}{node}{$nodeid}{OneTimeMax}	= $data{$address}{node}{$nodeid}{TimeMax};
+              $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+              $data{$address}{node}{$nodeid}{TimeMax}		= time();
+            } elsif ($value > $data{$address}{node}{$nodeid}{MinuteMax}) {
+              $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+              $data{$address}{node}{$nodeid}{TimeMax}		= time();
+            }
+          }
+
+          if (! defined($data{$address}{node}{$nodeid}{MinuteMin})) {
+            $data{$address}{node}{$nodeid}{MinuteMin}		= $value;
+            $data{$address}{node}{$nodeid}{TimeMin}		= time();
+          } else {
+            if ( $data{$address}{node}{$nodeid}{TimeMin} < $thisminute ) {
+              $data{$address}{node}{$nodeid}{FiveMinuteMin}	= $data{$address}{node}{$nodeid}{FourMinuteMin};
+              $data{$address}{node}{$nodeid}{FiveTimeMin}	= $data{$address}{node}{$nodeid}{FourTimeMin};
+              $data{$address}{node}{$nodeid}{FourMinuteMin}	= $data{$address}{node}{$nodeid}{ThreeMinuteMin};
+              $data{$address}{node}{$nodeid}{FourTimeMin}	= $data{$address}{node}{$nodeid}{ThreeTimeMin};
+              $data{$address}{node}{$nodeid}{ThreeMinuteMin}	= $data{$address}{node}{$nodeid}{TwoMinuteMin};
+              $data{$address}{node}{$nodeid}{ThreeTimeMin}	= $data{$address}{node}{$nodeid}{TwoTimeMin};
+              $data{$address}{node}{$nodeid}{TwoMinuteMin}	= $data{$address}{node}{$nodeid}{OneMinuteMin};
+              $data{$address}{node}{$nodeid}{TwoTimeMin}	= $data{$address}{node}{$nodeid}{OneTimeMin};
+              $data{$address}{node}{$nodeid}{OneMinuteMin}	= $data{$address}{node}{$nodeid}{MinuteMin};
+              $data{$address}{node}{$nodeid}{OneTimeMin}	= $data{$address}{node}{$nodeid}{TimeMin};
+              $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+              $data{$address}{node}{$nodeid}{TimeMin}		= time();
+            } elsif ($value < $data{$address}{node}{$nodeid}{MinuteMin}) {
+              $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+              $data{$address}{node}{$nodeid}{TimeMin}		= time();
+            }
+          }
+
+          $data{$address}{age} = time();
+        }
+      }
+    }
+    close(RETURNED);
+    logmsg 1, "ERROR on $HomieSub: Connection closed. Sleeping 1 second before retrying.";
     sleep 1;
   }
 }
@@ -1632,6 +1791,7 @@ sub reload {
   my @OldLinkHubs = @LinkHubs;
   my @OldLinkTHs = @LinkTHs;
   my @OldMQTTSubs = @MQTTSubs;
+  my @OldHomieSubs = @HomieSubs;
   my $OldSleepTime = $SleepTime;
   my $OldRunAsDaemon = $RunAsDaemon;
   my $OldSlowDown = $SlowDown;
@@ -1809,6 +1969,32 @@ sub reload {
       }
     }
   }
+  if (! (join(', ', sort(@OldHomieSubs)) eq join(', ', sort(@HomieSubs))) ) {
+    my %OldHomieSubs = map { $_ => 1 } @OldHomieSubs;
+    my %HomieSubs = map { $_ => 1 } @HomieSubs;
+    foreach my $Homie (@OldHomieSubs) {
+      if (! defined($HomieSubs{$Homie}) ) {
+        logmsg(1, "HomieMaster removed: $Homie");
+        foreach (keys(%data)) {
+          delete $data{$_} if ( $data{$_}{master} eq $Homie );
+        }
+        delete $MastersData{$Homie};
+        delete $addresses{$Homie};
+        $threads{$Homie}->kill('KILL')->detach();
+        $threadNames[$threads{$Homie}->tid] = undef;
+        delete $threads{$Homie};
+      }
+    }
+    foreach my $Homie (@HomieSubs) {
+      if (! defined($OldHomieSubs{$Homie}) ) {
+        logmsg(1, "HomieMaster added: $Homie");
+        $MastersData{$Homie} = &share( {} );
+        $addresses{$Homie} = &share( [] );
+        $threads{$Homie} = shared_clone(threads->create(\&monitor_homiesub, $Homie));
+        $threadNames[$threads{$Homie}->tid] = $Homie;
+      }
+    }
+  }
   if ( $OldRRDsDir ne $RRDsDir ) {			### changes automatically but needs to be checked
     # This should be done before UseRRDs as if that has been turned on it needs to also check
     # $RRDsDir is writable before enabling incase this value hasn't changed.
@@ -1953,6 +2139,18 @@ sub value_all {
         my $rain        = $data{$address}{$type};
         $rain           = 'NA' unless defined($rain);
         $OutputData{$name} = sprintf "%-18s - %11s: %-10s                 (age: %3s s)  %s%s\n",             $name, $type, $rain, $age, $master, $channel;
+
+      } elsif ($type eq 'homie') {
+        $OutputData{$name} = sprintf "%-18s - ", $name;
+        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+          $OutputData{$name} .= sprintf "%10s: ", $nodeid;
+          if (defined($data{$address}{node}{$nodeid}{value}) ) {
+            $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
+          } else {
+            $OutputData{$name} .= ' NA  ';
+          }
+        }
+        $OutputData{$name} .= sprintf "  (age: %3s s)  %s%s\n", $age, $master, $channel;
 
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
@@ -2108,6 +2306,15 @@ sub value {
         $rain           = 'NA' unless defined($rain);
         $output        .= "name: $name\naddress: $address\ntype: $type\n$type: $rain\nage: $age\nRawAge: $rawage\nmaster: $master$channel\nConfigType: $configtype\n";
 
+      } elsif ($type eq 'homie') {
+        $output        .= "name: $name\naddress: $address\ntype: $type\n";
+        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+          $output      .= $nodeid . ": ";
+          $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
+        }
+        $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
+        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\n";
+
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
         $arduino        = 'unknown' unless defined($arduino);
@@ -2245,7 +2452,7 @@ sub RecordRRDs {
 
   my @addresses;
   my ($address, $name, $type, $age, $rrdage);
-  my ($rrdcmd, $rrdfile, $rrderror, $updatetime, $ds0, $ds1, $ds2, $ds3, $ds4);
+  my ($rrdcmd, $rrdfile, $rrderror, $updatetime);
   while(1) {
     sleep (60 - (time() % 60));		# update once per minute and give some time for the first data
     @addresses = ();
@@ -2286,6 +2493,14 @@ sub RecordRRDs {
           @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:U");
         } elsif ($type eq 'rain') {
           @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:30");
+        } elsif ($type eq 'homie') {
+          foreach my $nodeid (sort(keys($data{$address}{node}))) {
+            if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
+              @rrdcmd = (@rrdcmd, "DS:$nodeid:COUNTER:300:U:U");
+            } else {
+              @rrdcmd = (@rrdcmd, "DS:$nodeid:GAUGE:300:U:U");
+            }
+          }
         } elsif ($type eq 'ds2423') {
           @rrdcmd = (@rrdcmd, "DS:channelA:COUNTER:300:U:U");
           @rrdcmd = (@rrdcmd, "DS:channelB:COUNTER:300:U:U");
@@ -2331,34 +2546,39 @@ sub RecordRRDs {
         next;	# can't update RRD file until next time
       }
 
+      $rrdcmd = "$updatetime";
       if ($type eq 'temperature') {
-        $ds0 = $data{$address}{temperature};
+        $rrdcmd .= ":" . ( (defined($data{$address}{temperature})) ? $data{$address}{temperature} : 'U' );
       } elsif ($type eq 'rain') {
-        $ds0 = $data{$address}{rain};
-      } elsif ($type eq 'ds2423') {
-        $ds0 = $data{$address}{channelA};
-        $ds1 = $data{$address}{channelB};
-      } elsif ($type =~ m/^arduino-/) {
-        $ds0 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor0})) ? $data{$address}{temperature} : 'U';
-        $ds1 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor1})) ? $data{$address}{sensor1} : 'U';
-        $ds2 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor2})) ? $data{$address}{sensor2} : 'U';
-        $ds3 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor3})) ? $data{$address}{sensor3} : 'U';
-        $ds4 = (defined($ArduinoSensors{$data{$address}{arduino}}{sensor4})) ? $data{$address}{sensor4} : 'U';
-      } else {
-        $ds0 = $data{$address}{temperature};
-        if ( $data{$address}{TimeMax} < $updatetime) {	# data collection thread may have already started the new minute
-          $ds1 = $data{$address}{MinuteMax};		# Has NOT started yet
-        } else {
-          $ds1 = $data{$address}{OneMinuteMax};		# Has started already, use the last minutes result
+        $rrdcmd .= ":" . ( (defined($data{$address}{rain})) ? $data{$address}{rain} : 'U' );
+      } elsif ($type eq 'homie') {
+        foreach my $nodeid (sort(keys($data{$address}{node}))) {
+          if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
+            $rrdcmd .= ":" . ( (defined($data{$address}{node}{$nodeid}{value})) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
+          } else {
+            $rrdcmd .= ":" . ( (defined($data{$address}{node}{$nodeid}{value})) ? $data{$address}{node}{$nodeid}{value} : 'U' );
+          }
         }
-        $ds1 = $data{$address}{$type} if ($type eq 'depth');
+      } elsif ($type eq 'ds2423') {
+        $rrdcmd .= ":" . ( (defined($data{$address}{channelA})) ? $data{$address}{channelA} : 'U' );
+        $rrdcmd .= ":" . ( (defined($data{$address}{channelB})) ? $data{$address}{channelB} : 'U' );
+      } elsif ($type =~ m/^arduino-/) {
+        $rrdcmd .= ":" . ( (defined($ArduinoSensors{$data{$address}{arduino}}{sensor0})) ? $data{$address}{temperature} : 'U' );
+        $rrdcmd .= ":" . ( (defined($ArduinoSensors{$data{$address}{arduino}}{sensor1})) ? $data{$address}{sensor1} : 'U' );
+        $rrdcmd .= ":" . ( (defined($ArduinoSensors{$data{$address}{arduino}}{sensor2})) ? $data{$address}{sensor2} : 'U' );
+        $rrdcmd .= ":" . ( (defined($ArduinoSensors{$data{$address}{arduino}}{sensor3})) ? $data{$address}{sensor3} : 'U' );
+        $rrdcmd .= ":" . ( (defined($ArduinoSensors{$data{$address}{arduino}}{sensor4})) ? $data{$address}{sensor4} : 'U' );
+      } else {
+        $rrdcmd .= ":" . ( (defined($data{$address}{temperature})) ? $data{$address}{temperature} : 'U' );
+        if ( $data{$address}{TimeMax} < $updatetime) {		# data collection thread may have already started the new minute
+          # Has NOT started yet
+          $rrdcmd .= ":" . ( (defined($data{$address}{MinuteMax})) ? $data{$address}{MinuteMax} : 'U' );
+        } else {
+          # Has started already, use the last minutes result
+          $rrdcmd .= ":" . ( (defined($data{$address}{OneMinuteMax})) ? $data{$address}{OneMinuteMax} : 'U' );
+        }
+        $rrdcmd .= ":" . $data{$address}{$type} if ($type eq 'depth');
       }
-
-      $ds0 = 'U' unless defined($ds0);
-      $ds1 = 'U' unless defined($ds1);
-      $ds2 = 'U' unless defined($ds2);
-      $ds3 = 'U' unless defined($ds3);
-      $ds4 = 'U' unless defined($ds4);
 
       if (defined($data{$address}{age})) {
         $age       = time - $data{$address}{age};
@@ -2367,32 +2587,14 @@ sub RecordRRDs {
             logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Using last known value as a rain sensor.";
           } else {
             logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Setting value to undefined.";
-            $ds0 = 'U';
-            $ds1 = 'U';
-            $ds2 = 'U';
-            $ds3 = 'U';
-            $ds4 = 'U';
+            $rrdcmd =~ s/:\d+/:U/g;
           }
         }
       } else {
-        $ds0 = 'U';
-        $ds1 = 'U';
-        $ds2 = 'U';
-        $ds3 = 'U';
-        $ds4 = 'U';
+        # Without age data storing RRD values would be unreliable
+        $rrdcmd =~ s/:\d+/:U/g;
       }
 
-      if ($type eq 'temperature') {
-        $rrdcmd = "$updatetime:$ds0";
-      } elsif ($type eq 'rain') {
-        $rrdcmd = "$updatetime:$ds0";
-      } elsif ($type eq 'ds2423') {
-        $rrdcmd = "$updatetime:$ds0:$ds1";
-      } elsif ($type =~ m/^arduino-/) {
-        $rrdcmd = "$updatetime:$ds0:$ds1:$ds2:$ds3:$ds4";
-      } else {
-        $rrdcmd = "$updatetime:$ds0:$ds1";
-      }
       logmsg 4, "RRD for $name: $rrdcmd";
       RRDs::update ($rrdfile, "$rrdcmd");
       $rrderror=RRDs::error;
@@ -2447,7 +2649,7 @@ sub monitor_agedata {
   my $age;
   sleep 1;		# give the other threads a second to get started
   while(1) {
-    foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs) {
+    foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs) {
       $age = (time() - $agedata{$LinkDev});
       logmsg (1,"Age data for $LinkDev: $age seconds");
       if ($age > 15) {
@@ -2468,6 +2670,7 @@ sub ParseConfigFile {
   @LinkHubs = ();
   @LinkTHs = ();
   @MQTTSubs = ();
+  @HomieSubs = ();
   $SleepTime = 0;
   $RunAsDaemon = 1;
   $SlowDown = 0;
@@ -2483,7 +2686,8 @@ sub ParseConfigFile {
   open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
   while (<CONFIG>) {
     chomp;
-    s/\w*#.*//;
+    s!\w*//.*!!;
+    next if (m/^#/);
     next if (m/^\s*$/);
     if (m/^([A-Za-z0-9]+)\s*=\s*(.+)$/) {
       $option = $1;
@@ -2497,6 +2701,8 @@ sub ParseConfigFile {
         $PidFile = $value;
       } elsif ($option eq 'MQTTSubs') {
         @MQTTSubs = split(/,\s*/, $value);
+      } elsif ($option eq 'HomieSubs') {
+        @HomieSubs = split(/,\s*/, $value);
       } elsif ($option eq 'LinkTHs') {
         @LinkTHs = split(/,\s*/, $value);
       } elsif ($option eq 'LinkHubs') {
