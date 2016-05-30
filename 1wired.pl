@@ -349,11 +349,6 @@ sub monitor_linkhub {
       $returned = LinkData("\n");
       $returned = LinkData("\n");
       $returned = LinkData("\n");
-      $returned = LinkData("\n");
-      $returned = LinkData("\n");
-      $returned = LinkData("\n");
-      $returned = LinkData("\n");
-      $returned = LinkData("\n");
     }
     $count++;
     $agedata{$LinkDev} = time();
@@ -583,7 +578,19 @@ sub monitor_linkhub {
           $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
         }
       }
-      logmsg 1, "ERROR on $LinkDev: An error occured during the search. Another search has been requested." if ($MastersData{$LinkDev}{SearchNow});
+      if ($MastersData{$LinkDev}{SearchNow}) {
+        logmsg 1, "ERROR on $LinkDev: An error occured during the search. Another search has been requested.";
+        $returned = LinkData("\n");		# Discard returned data
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+        $returned = LinkData("\n");
+      }
       logmsg 5, "INFO: Found last device on $LinkDev.";
 
       @{$addresses{$LinkDev}} = @addresses;
