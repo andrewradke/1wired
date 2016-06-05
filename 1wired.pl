@@ -19,7 +19,7 @@ use POSIX ":sys_wait_h";
 
 use Proc::Daemon;
 
-my $version = '1.9';
+my $version = '1.9.1';
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
 
@@ -213,6 +213,9 @@ if ($ListenPort =~ m/^\d+$/) {
 
 logmsg 1, "Listening on socket $ListenPort";
 
+# with all the threads started make sure $0 for the main thread is the script name
+$0 = $script;
+
 my $listener;
 
 my $client;
@@ -302,6 +305,7 @@ sub report {
 sub monitor_linkhub {
   our $LinkDev = shift;
   my $tid = threads->tid();
+  $0 = $LinkDev;
   our $socket;
 
   my $returned;
@@ -998,6 +1002,7 @@ sub monitor_linkhub {
 sub monitor_linkth {
   my $LinkDev = shift;
   my $tid = threads->tid();
+  $0 = $LinkDev;
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_linkth thread for $LinkDev.");
     threads->exit();
@@ -1188,6 +1193,7 @@ sub monitor_linkth {
 sub monitor_mqttsub {
   my $MQTTSub = shift;
   my $tid = threads->tid();
+  $0 = $MQTTSub;
   my $pid;
 
   $SIG{'KILL'} = sub {
@@ -1384,6 +1390,7 @@ sub monitor_mqttsub {
 sub monitor_homiesub {
   my $HomieSub = shift;
   my $tid = threads->tid();
+  $0 = $HomieSub;
   my $pid;
 
   $SIG{'KILL'} = sub {
@@ -2451,6 +2458,7 @@ EOF
 
 sub RecordRRDs {
   my $tid = threads->tid();
+  $0 = "RecordRRDs";
   logmsg(3, "Starting RecordRRDs thread.");
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping RecordRRDs thread.");
@@ -2618,6 +2626,7 @@ sub RecordRRDs {
 
 sub monitor_threadstatus {
   my $tid = threads->tid();
+  $0 = "threadstatus";
   logmsg(4, "Starting monitor_threadstatus thread.");
   $SIG{'KILL'} = sub {
     logmsg(4, "Stopping monitor_threadstatus thread.");
@@ -2647,6 +2656,7 @@ sub monitor_threadstatus {
 
 sub monitor_agedata {
   my $tid = threads->tid();
+  $0 = "agedata";
   logmsg(4, "Starting monitor_agedata thread.");
   $SIG{'KILL'} = sub {
     logmsg(4, "Stopping monitor_agedata thread.");
