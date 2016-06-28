@@ -1470,7 +1470,6 @@ sub monitor_homiesub {
 
 
         if ( $key =~ s/^\$// ) {
-          $key = "fwversion" if ( $key eq "fversion" );	# Bug from depth-sensor firmware 0.2.0
           $data{$address}{$key} = $value;
 
           if ( $key eq "name" ) {
@@ -2194,7 +2193,7 @@ sub value_all {
             $OutputData{$name} .= ' NA  ';
           }
         }
-        $OutputData{$name} .= '                    ' if ( keys %hash = 1 );
+        $OutputData{$name} .= '                    ' if ( keys %{$data{$address}{node}} == 1 );
         $OutputData{$name} .= sprintf "  (age: %3s s)  %s%s\n", $age, $master, $channel;
 
       } elsif ($type =~ m/^arduino-/) {
@@ -2358,7 +2357,7 @@ sub value {
           $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
         }
         $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
-        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\n";
+        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
 
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
