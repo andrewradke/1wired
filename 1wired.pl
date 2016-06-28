@@ -19,7 +19,7 @@ use POSIX ":sys_wait_h";
 
 use Proc::Daemon;
 
-my $version = '1.9.1';
+my $version = '1.9.2';
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
 
@@ -210,6 +210,9 @@ if ($ListenPort =~ m/^\d+$/) {
   die "Cannot create socket on $ListenPort: $!" unless $server_sock;
   chmod 0770, "$ListenPort";
 }
+
+# Give all the threads a second to get going before starting the main loop
+sleep 1;
 
 logmsg 1, "Listening on socket $ListenPort";
 
@@ -1392,6 +1395,7 @@ sub monitor_homiesub {
   my $tid = threads->tid();
   $0 = $HomieSub;
   my $pid;
+  my ($HomieHost, $HomieTopic);
 
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_homiesub thread for $HomieSub.");
@@ -1400,9 +1404,13 @@ sub monitor_homiesub {
     threads->exit();
   };
 
-  if (! ($HomieSub =~ m/^([^\/]+)\/(.+)$/) ) {
-    logmsg(1, "Homie topic defined in config file ($HomieSub) is not valid (.*/.*). Exiting.");
+  if (! ($HomieSub =~ m/^([^:]+:|)([^\/]+\/.+)$/) ) {
+    logmsg(1, "MQTT broker and/or Homie topic defined in config file ($HomieSub) is not valid (.*/.*). Exiting.");
     threads->exit();
+  } else {
+    $HomieHost = $1;
+    $HomieTopic = $2;
+    $HomieHost =~ s/:$//;
   }
   logmsg 1, "Monitoring Homie $HomieSub";
   our $MasterType = 'Homie';
@@ -1419,9 +1427,16 @@ sub monitor_homiesub {
 
   LOOP: while (1) {
     logmsg 4, "Connecting by $MasterType to $HomieSub";
-    while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$HomieSub") ) ) {
-      logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
-      sleep 10;						# Wait for 10 seconds before retrying
+    if ( (defined($HomieHost)) && ($HomieHost ne '') ) {
+      while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-h", "$HomieHost", "-t", "$HomieTopic") ) ) {
+        logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
+        sleep 10;						# Wait for 10 seconds before retrying
+      }
+    } else {
+      while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$HomieSub") ) ) {
+        logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
+        sleep 10;						# Wait for 10 seconds before retrying
+      }
     }
 
     while ($returned = <RETURNED>) {
@@ -1433,27 +1448,33 @@ sub monitor_homiesub {
         my $topic = $1;
         $address = $2;
         my $key = $3;
+        logmsg 6, "topic: $1, address: $2, key: $3, value: $value";
 
         if (! defined($data{$address})) {
           $data{$address} = &share( {} );
-          $data{$address}{type} = 'homie';
         }
         if (! defined($data{$address}{node})) {
           $data{$address}{node} = &share( {} );
         }
+        if ( (! defined($data{$address}{master}) ) || ( $data{$address}{master} ne $HomieSub ) ) {
+          if (! $localaddresses{$address}) {
+            $localaddresses{$address} = 1;
+            logmsg 2, "Found $address on $HomieSub";
+            push (@{$addresses{$HomieSub}}, $address);
+            $MastersData{$HomieSub}{SearchTime} = time();
+            $data{$address}{type} = 'homie';
+          }
+          $data{$address}{name} = $address;	# This can be overridden by a name value later
+          $data{$address}{master} = $HomieSub;
+        }
 
-        $data{$address}{master} = $HomieSub;
 
         if ( $key =~ s/^\$// ) {
+          $key = "fwversion" if ( $key eq "fversion" );	# Bug from depth-sensor firmware 0.2.0
           $data{$address}{$key} = $value;
 
           if ( $key eq "name" ) {
-            if (! $localaddresses{$address}) {
-              $localaddresses{$address} = 1;
-              logmsg 2, "Found $address ($value) on $HomieSub";
-              push (@{$addresses{$HomieSub}}, $address);
-              $MastersData{$HomieSub}{SearchTime} = time();
-            }
+            # Nothing to do here as it has now been set already
           } elsif ( $key eq "uptime" ) {
             if ( $data{$address}{uptime} > $value ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
@@ -1464,6 +1485,10 @@ sub monitor_homiesub {
           } elsif ( $key eq "nodes" ) {
             foreach my $node (split(/,/, $value)) {
               my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
+              if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
+                $nodeid = 'depth';
+                $property = 'm';
+              }
               if (! defined($data{$address}{node}{$nodeid})) {
                 $data{$address}{node}{$nodeid} = &share( {} );
               }
@@ -1475,7 +1500,12 @@ sub monitor_homiesub {
 
           my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
 
-          # This shouldv'e been defined when receiving the $nodes property above but check in case that hasn't been recieved.
+          if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
+            $nodeid = 'depth';
+            $value = ($1 - $value)/100;
+          }
+
+          # This should've been defined when receiving the $nodes property above but check in case that hasn't been recieved.
           if (! defined($data{$address}{node}{$nodeid})) {
             $data{$address}{node}{$nodeid} = &share( {} );
           }
@@ -2112,7 +2142,7 @@ sub value_all {
     next if ($data{$address}{name} eq 'ignore');
     eval {
       $name        = $data{$address}{name};
-      $name        = "* $address" if ($name eq $address);
+      $name        = "* $address" if (! defined($deviceDB{$address}));
       $type        = $data{$address}{type};
       $master      = $data{$address}{master};
       $channel     = $data{$address}{channel};
@@ -2157,13 +2187,14 @@ sub value_all {
       } elsif ($type eq 'homie') {
         $OutputData{$name} = sprintf "%-18s - ", $name;
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
-          $OutputData{$name} .= sprintf "%10s: ", $nodeid;
+          $OutputData{$name} .= sprintf "%11s: ", $nodeid;
           if (defined($data{$address}{node}{$nodeid}{value}) ) {
             $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
           } else {
             $OutputData{$name} .= ' NA  ';
           }
         }
+        $OutputData{$name} .= '                    ' if ( keys %hash = 1 );
         $OutputData{$name} .= sprintf "  (age: %3s s)  %s%s\n", $age, $master, $channel;
 
       } elsif ($type =~ m/^arduino-/) {
@@ -2481,7 +2512,7 @@ sub RecordRRDs {
 
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
-      next if ($name eq $address);
+      next if (! defined($deviceDB{$address}));
 
       $type        = $data{$address}{type};
       next if ($type eq 'ds2401');
@@ -2841,7 +2872,8 @@ sub ParseDeviceFile {
     chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
-    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
+#    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
+    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
       if (! defined($deviceDB{$1})) {
         $deviceDB{$1} = &share( {} );
       }
@@ -2854,6 +2886,7 @@ sub ParseDeviceFile {
       }
       $data{$1}{name} = $2;
       $data{$1}{type} = $3;
+      logmsg 4, "Device configured: address: $1, name: $2, type: $3";
     } else {
       logmsg 1, "ERROR: Unrecognised line in devices file: '$_'";
       $errors = 1;

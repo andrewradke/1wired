@@ -222,6 +222,10 @@ my $normal = '';
 
 ($name) = $return =~ m/name: ([^\n]*)/;
 if ($name) {
+  foreach (split(/\n/, $return)) {
+    m/^([^:]+): ([^\n]*)$/;
+    $data{$1} = $2;
+  }
   ($address)     = $return =~ m/address: ([^\n]*)/;
   ($type)        = $return =~ m/type: ([^\n]*)/;
   ($temperature) = $return =~ m/temperature: ([^\n]*)/;
@@ -476,7 +480,7 @@ sub checkrange {
 sub restrict_num_decimal_digits {
   my $num=shift;
   my $digs_to_cut=shift;
-  if ($num=~/\d+\.(\d){$digs_to_cut,}/) {
+  if ( ( defined($num) ) && ( $num=~/\d+\.(\d){$digs_to_cut,}/ ) ) {
     $num=sprintf("%.".($digs_to_cut)."f", $num);
   }
   return $num;
