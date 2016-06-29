@@ -2357,7 +2357,7 @@ sub value {
           $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
         }
         $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
-        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
+        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nipaddress: $data{$address}{localip} dBm\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
 
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
