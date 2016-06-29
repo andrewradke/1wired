@@ -1470,17 +1470,14 @@ sub monitor_homiesub {
 
 
         if ( $key =~ s/^\$// ) {
-          $data{$address}{$key} = $value;
 
           if ( $key eq "name" ) {
             # Nothing to do here as it has now been set already
           } elsif ( $key eq "uptime" ) {
+            $data{$address}{uptime} = $value if (! defined($data{$address}{uptime}) );
             if ( $data{$address}{uptime} > $value ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
-              $data{$address}{uptime} = $value;
-              next;	# ignore first reading after a reboot
             }
-            $data{$address}{uptime} = $value;
           } elsif ( $key eq "nodes" ) {
             foreach my $node (split(/,/, $value)) {
               my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
@@ -1495,6 +1492,7 @@ sub monitor_homiesub {
               $data{$address}{node}{$nodeid}{value} = 'NA';
             }
           }
+          $data{$address}{$key} = $value;
         } else {
 
           my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
@@ -2357,7 +2355,7 @@ sub value {
           $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
         }
         $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
-        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nipaddress: $data{$address}{localip} dBm\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
+        $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nipaddress: $data{$address}{localip}\nuptime: $data{$address}{uptime}\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
 
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
