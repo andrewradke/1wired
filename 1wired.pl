@@ -1473,12 +1473,22 @@ sub monitor_homiesub {
 
           if ( $key eq "name" ) {
             # Nothing to do here as it has now been set already
+          } elsif ( $key eq "online" ) {
+            if ( ( defined($data{$address}{online}) ) && ( $data{$address}{online} ne $value ) ) {
+              if ( $value eq "true" ) {
+                logmsg 1, "INFO on $HomieSub:$data{$address}{name}: (query) Sensor now online.";
+              } else {
+                logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor offline.";
+              }
+            }
           } elsif ( $key eq "uptime" ) {
-            $data{$address}{uptime} = $value if (! defined($data{$address}{uptime}) );
-            if ( $data{$address}{uptime} > $value ) {
+            if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} > $value ) ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
           } elsif ( $key eq "nodes" ) {
+            if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
+              logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
+            }
             foreach my $node (split(/,/, $value)) {
               my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
               if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
@@ -1491,6 +1501,8 @@ sub monitor_homiesub {
               $data{$address}{node}{$nodeid}{type}  = $property;
               $data{$address}{node}{$nodeid}{value} = 'NA';
             }
+          } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
+            logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
           }
           $data{$address}{$key} = $value;
         } else {
