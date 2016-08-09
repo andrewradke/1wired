@@ -1474,7 +1474,7 @@ sub monitor_homiesub {
           if ( $key eq "name" ) {
             # Nothing to do here as it has now been set already
           } elsif ( $key eq "online" ) {
-            if ( ( defined($data{$address}{online}) ) && ( $data{$address}{online} ne $value ) ) {
+            if ( ( ( defined($data{$address}{online}) ) && ( $data{$address}{online} ne $value ) ) || ( (! defined($data{$address}{online}) ) && ( $value ne 'true' ) ) ) {
               if ( $value eq "true" ) {
                 logmsg 1, "INFO on $HomieSub:$data{$address}{name}: (query) Sensor now online.";
               } else {
@@ -1485,6 +1485,8 @@ sub monitor_homiesub {
             if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} > $value ) ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
+          } elsif ( $key eq "signal" ) {
+            logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm" if ( $value < -90 );
           } elsif ( $key eq "nodes" ) {
             if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";

@@ -235,6 +235,7 @@ if ($name) {
   ($updated)     = $return =~ m/updated: ([^\n]*)/;
   ($age)         = $return =~ m/age: ([^\n]*)/;
   ($iminute)     = $return =~ m/Current1MinuteMax: ([^\n]*)/;
+  $temperature   = 0 unless ($temperature);
   $voltage       = 0 unless ($voltage);
   $minute        = 0 unless ($minute);
   $FiveMinute    = 0 unless ($FiveMinute);
@@ -278,35 +279,24 @@ if ($name) {
           $range = $1;
 # Don't bother with the RRDs if
 #	the check is for > x and current value is > x
-#	the check is for > x and the range is >= 5 min and the 5 min max is > x
-#	the range is exactly 5 minutes
-          if ((m/^>(.*)/) && ($return = checkrange($data{$test},$_))) {
-            #print "current $test is $data{$test} ($_);  $normal\n";
+#	or the check is for > x and the range is >= 5 min and the 5 min max is > x
+          if ((m/^>(.*)/) && (checkrange($data{$test},$_))) {
             print "current $test is $data{$test};  $normal\n";
             exit 0;
-          } elsif (($range >= 5) && (m/^>(.*)/) && ($return = checkrange($FiveMinute,$_))) {
-            #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
+          } elsif (($range >= 5) && (m/^>(.*)/) && (checkrange($FiveMinute,$_))) {
             print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
             exit 0;
-#          } elsif ($range == 5) {
-#            if (checkrange($FiveMinute,$_)) {
-#              #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
-#              print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
-#              exit 0;
-#            }
           } else {
             ($start, $step, $data) = check_rrds($name) if (! defined($data));
             $max = restrict_num_decimal_digits(MaxInRange($start, $step, $data, $range),1);
             $max = $data{$test} if ($data{$test} > $max);
-            if ($return = checkrange($max,$_)) {
-              #print "$range minute(s) maximum $test: $max ($_)\n";
-              print "$range minute(s) maximum $test: $max\n";
+            if (checkrange($max,$_)) {
+              print "$test $range minute(s) maximum: $max;  $normal\n";
               exit 0;
             }
           }
         } else {
-          if ($return = checkrange($data{$test},$_)) {
-            #print "$test is $data{$test} ($_)\n";
+          if (checkrange($data{$test},$_)) {
             print "$test is $data{$test} ($StateGood)\n";
             exit 0;
           }
@@ -321,35 +311,24 @@ if ($name) {
           $range = $1;
 # Don't bother with the RRDs if
 #	the check is for > x and current value is > x
-#	the check is for > x and the range is >= 5 min and the 5 min max is > x
-#	the range is exactly 5 minutes
-          if ((m/^>(.*)/) && ($return = checkrange($data{$test},$_))) {
-            #print "current $test is $data{$test} ($_);  $normal\n";
+#	or the check is for > x and the range is >= 5 min and the 5 min max is > x
+          if ((m/^>(.*)/) && (checkrange($data{$test},$_))) {
             print "current $test is $data{$test};  $normal\n";
             exit 1;
-          } elsif (($range >= 5) && (m/^>(.*)/) && ($return = checkrange($FiveMinute,$_))) {
-            #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
+          } elsif (($range >= 5) && (m/^>(.*)/) && (checkrange($FiveMinute,$_))) {
             print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
             exit 1;
-#          } elsif ($range == 5) {
-#            if (checkrange($FiveMinute,$_)) {
-#              #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
-#              print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
-#              exit 1;
-#            }
           } else {
             ($start, $step, $data) = check_rrds($name) if (! defined($data));
             $max = restrict_num_decimal_digits(MaxInRange($start, $step, $data, $range),1);
             $max = $data{$test} if ($data{$test} > $max);
-            if ($return = checkrange($max,$_)) {
-              #print "$range minute(s) maximum $test: $max ($_);  $normal\n";
-              print "$range minute(s) maximum $test: $max;  $normal\n";
+            if (checkrange($max,$_)) {
+              print "$test $range minute(s) maximum: $max;  $normal\n";
               exit 1;
             }
           }
         } else {
-          if ($return = checkrange($data{$test},$_)) {
-            #print "$test is $data{$test} ($_);  $normal\n";
+          if (checkrange($data{$test},$_)) {
             print "$test is $data{$test};  $normal\n";
             exit 1;
           }
@@ -364,35 +343,24 @@ if ($name) {
           $range = $1;
 # Don't bother with the RRDs if
 #	the check is for > x and current value is > x
-#	the check is for > x and the range is >= 5 min and the 5 min max is > x
-#	the range is exactly 5 minutes
-          if ((m/^>(.*)/) && ($return = checkrange($data{$test},$_))) {
-            #print "current $test is $data{$test} ($_);  $normal\n";
+#	or the check is for > x and the range is >= 5 min and the 5 min max is > x
+          if ((m/^>(.*)/) && (checkrange($data{$test},$_))) {
             print "current $test is $data{$test};  $normal\n";
             exit 2;
-          } elsif (($range >= 5) && (m/^>(.*)/) && ($return = checkrange($FiveMinute,$_))) {
-            #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
+          } elsif (($range >= 5) && (m/^>(.*)/) && (checkrange($FiveMinute,$_))) {
             print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
             exit 2;
-#          } elsif ($range == 5) {
-#            if (checkrange($FiveMinute,$_)) {
-#              #print "$range minute(s) maximum $test: $FiveMinute ($_);  $normal\n";
-#              print "$range minute(s) maximum $test: $FiveMinute;  $normal\n";
-#              exit 2;
-#            }
           } else {
             ($start, $step, $data) = check_rrds($name) if (! defined($data));
             $max = restrict_num_decimal_digits(MaxInRange($start, $step, $data, $range),1);
             $max = $data{$test} if ($data{$test} > $max);
-            if ($return = checkrange($max,$_)) {
-              #print "$range minute(s) maximum $test: $max ($_);  $normal\n";
-              print "$range minute(s) maximum $test: $max;  $normal\n";
+            if (checkrange($max,$_)) {
+              print "$test $range minute(s) maximum: $max;  $normal\n";
               exit 2;
             }
           }
         } else {
-          if ($return = checkrange($data{$test},$_)) {
-            #print "$test is $data{$test} ($_);  $normal\n";
+          if (checkrange($data{$test},$_)) {
             print "$test is $data{$test};  $normal\n";
             exit 2;
           }
@@ -437,7 +405,6 @@ sub checkrange {
   # ARG2 = test range
   my $value = shift;
   $_ = shift;
-  #print STDERR "$_\n";
   if (m/^([^><]+?)-(.*)$/) {
     if ($value >= $1 && $value <= $2) {
       return 1;
@@ -513,9 +480,11 @@ sub MaxInRange {
   my $step = shift;
   my $data = shift;
   my $range = shift;
+  my $ds = 1;
+  $ds = 0 if ( $test eq 'temperature');
 
   my $row;
-  my $max = 0;
+  my $max;
   my $timestamp = $start;
   my $cur_time = time();
   my $start_time = $cur_time - ($range * 60);
@@ -524,11 +493,11 @@ sub MaxInRange {
     $timestamp += $step;
     next if ($timestamp < $start_time);
     last if ($timestamp > $cur_time);
-    next if (! defined(@$row[1]));
+    next if (! defined(@$row[$ds]));
+    $max = @$row[$ds] if ! defined($max);
     if (@$row[1] > $max) {
       $max = @$row[1];
     }
-    #$timestamp += $step;
   }
 
   return $max;
