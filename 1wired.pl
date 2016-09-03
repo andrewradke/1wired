@@ -1444,6 +1444,23 @@ sub monitor_homiesub {
       $agedata{$HomieSub} = time();
 
       foreach my $value (split(/\r?\n/, $returned)) {
+        if ($value =~ m!^([^/]+)/([^/]+) \(null\)$!) {		# address has been set to null so remove from list
+          delete $localaddresses{$2};
+          logmsg 2, "Removed $2 on $HomieSub";
+          (@{$addresses{$HomieSub}}) = (keys(%localaddresses));
+          $MastersData{$HomieSub}{SearchTime} = time();
+          delete $data{$2}{type};
+          delete $data{$2}{nodes};
+          delete $data{$2}{fwname};
+          delete $data{$2}{fwversion};
+          delete $data{$2}{localip};
+          delete $data{$2}{uptime};
+          delete $data{$2}{signal};
+          delete $data{$2}{online};
+          delete $data{$2};
+          next;
+        }
+
         $value =~ s!^([^/]+)/([^/]+)/([^ ]+) !!;
         my $topic = $1;
         $address = $2;
@@ -1457,17 +1474,25 @@ sub monitor_homiesub {
           $data{$address}{node} = &share( {} );
         }
         if ( (! defined($data{$address}{master}) ) || ( $data{$address}{master} ne $HomieSub ) ) {
-          if (! $localaddresses{$address}) {
+          if ( (! $localaddresses{$address}) && ($value ne "(null)") ) {
             $localaddresses{$address} = 1;
             logmsg 2, "Found $address on $HomieSub";
             push (@{$addresses{$HomieSub}}, $address);
             $MastersData{$HomieSub}{SearchTime} = time();
-            $data{$address}{type} = 'homie';
+            $data{$address}{type}	= 'homie';
+            $data{$address}{nodes}	= '' unless (defined($data{$address}{nodes}));
+            $data{$address}{fwname}	= '' unless (defined($data{$address}{fwname}));
+            $data{$address}{fwversion}	= '' unless (defined($data{$address}{fwversion}));
+            $data{$address}{localip}	= '' unless (defined($data{$address}{localip}));
+            $data{$address}{uptime}	= '' unless (defined($data{$address}{uptime}));
+            $data{$address}{signal}	= '' unless (defined($data{$address}{signal}));
+            $data{$address}{online}	= '' unless (defined($data{$address}{online}));
           }
           $data{$address}{name} = $address;	# This can be overridden by a name value later
           $data{$address}{master} = $HomieSub;
         }
 
+        $value = '' if ($value eq "(null)");
 
         if ( $key =~ s/^\$// ) {
 
@@ -1486,7 +1511,8 @@ sub monitor_homiesub {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
           } elsif ( $key eq "signal" ) {
-            logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm" if ( $value < -90 );
+            # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
+            logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm" if ( $value < -93 );
           } elsif ( $key eq "nodes" ) {
             if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
@@ -2524,6 +2550,7 @@ sub RecordRRDs {
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
       next if (! defined($deviceDB{$address}));
+      next if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') );		# We don't know about any nodes yet so we won't be able to put any data into the RRD
 
       $type        = $data{$address}{type};
       next if ($type eq 'ds2401');
