@@ -1514,7 +1514,7 @@ sub monitor_homiesub {
             # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
             logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm" if ( $value < -93 );
           } elsif ( $key eq "nodes" ) {
-            if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
+            if ( ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
             }
             foreach my $node (split(/,/, $value)) {
@@ -1529,7 +1529,7 @@ sub monitor_homiesub {
               $data{$address}{node}{$nodeid}{type}  = $property;
               $data{$address}{node}{$nodeid}{value} = 'NA';
             }
-          } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne $value ) ) {
+          } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
             logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
           }
           $data{$address}{$key} = $value;
@@ -2549,10 +2549,13 @@ sub RecordRRDs {
 
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
-      next if (! defined($deviceDB{$address}));
-      next if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') );		# We don't know about any nodes yet so we won't be able to put any data into the RRD
-
       $type        = $data{$address}{type};
+      next if (! defined($deviceDB{$address}));
+      if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into the RRD
+        logmsg (2, "homie device $name doesn't have any defined nodes, skipping RRD update.");
+        next;
+      }
+
       next if ($type eq 'ds2401');
 
       $rrdage    = 0;
@@ -2638,9 +2641,9 @@ sub RecordRRDs {
       } elsif ($type eq 'homie') {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
-            $rrdcmd .= ":" . ( (defined($data{$address}{node}{$nodeid}{value})) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
+            $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
           } else {
-            $rrdcmd .= ":" . ( (defined($data{$address}{node}{$nodeid}{value})) ? $data{$address}{node}{$nodeid}{value} : 'U' );
+            $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? $data{$address}{node}{$nodeid}{value} : 'U' );
           }
         }
       } elsif ($type eq 'ds2423') {
