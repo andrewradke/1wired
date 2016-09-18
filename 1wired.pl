@@ -919,8 +919,12 @@ sub monitor_linkhub {
               $voltage = $voltage / 1.417;
             }
             if ($type =~ m/^pressure([0-9]+)$/) {
-              next if ($voltage > 5);
-              # 0.5V ~= 0psi
+              if ( $voltage > 4.95 ) {
+                ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
+                logmsg 2, "WARNING on $LinkDev:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
+                next;
+              }
+              # 0.5V = 0psi
               # 4V for pressure range
               $voltage = ($voltage - 0.5) / 4 * $1;
             }
@@ -1106,8 +1110,12 @@ sub monitor_linkth {
           $voltage = $voltage / 1.417;
         }
         if ($type =~ m/^pressure([0-9]+)$/) {
-          next if ($voltage > 5);
-          # 0.5V ~= 0psi
+          if ( $voltage > 4.95 ) {
+            ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
+            logmsg 2, "WARNING on $LinkDev:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
+            next;
+          }
+          # 0.5V = 0psi
           # 4V for pressure range
           $voltage = ($voltage - 0.5) / 4 * $1;
         }
@@ -1303,8 +1311,12 @@ sub monitor_mqttsub {
             $voltage = $voltage / 1.417;
           }
           if ($type =~ m/^pressure([0-9]+)$/) {
-            next if ($voltage > 5);
-            # 0.5V ~= 0psi
+            if ( $voltage > 4.95 ) {
+              ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
+              logmsg 2, "WARNING on $MQTTSub:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
+              next;
+            }
+            # 0.5V = 0psi
             # 4V for pressure range
             $voltage = ($voltage - 0.5) / 4 * $1;
           }
