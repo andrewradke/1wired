@@ -19,7 +19,7 @@ use POSIX ":sys_wait_h";
 
 use Proc::Daemon;
 
-my $version = '1.9.2';
+my $version = '1.9.3';
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
 
@@ -2238,7 +2238,11 @@ sub value_all {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           $OutputData{$name} .= sprintf "%11s: ", $nodeid;
           if (defined($data{$address}{node}{$nodeid}{value}) ) {
-            $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
+            if ($nodeid eq 'counter' ) {
+              $OutputData{$name} .= sprintf "%5i", $data{$address}{node}{$nodeid}{value};
+            } else {
+              $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
+            }
           } else {
             $OutputData{$name} .= ' NA  ';
           }
