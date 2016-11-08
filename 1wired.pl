@@ -51,6 +51,8 @@ my %mstype = (
         '23' => 'pressure50',
         '24' => 'pressure100',
         '25' => 'pressure200',
+        '26' => 'pressure72.5',
+        '27' => 'pressure145',
 
         '30' => 'bme280',
         '31' => 'bmp280',
@@ -918,7 +920,7 @@ sub monitor_linkhub {
               # 1.417psi/metre
               $voltage = $voltage / 1.417;
             }
-            if ($type =~ m/^pressure([0-9]+)$/) {
+            if ($type =~ m/^pressure([0-9.]+)$/) {
               if ( $voltage > 4.95 ) {
                 ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
                 logmsg 2, "WARNING on $LinkDev:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
@@ -936,8 +938,8 @@ sub monitor_linkhub {
             } else {
               $voltage = restrict_num_decimal_digits($voltage,1);
             }
-            $type        =~ s/^pressure[0-9]+$/pressure/;
-            $type        =~ s/^depth-?[0-9]+$/depth/;
+            $type        =~ s/^pressure[0-9.]+$/pressure/;
+            $type        =~ s/^depth-?[0-9.]+$/depth/;
             $data{$address}{$type} = $voltage;
 
             my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
@@ -1109,7 +1111,7 @@ sub monitor_linkth {
           # 1.417psi/metre
           $voltage = $voltage / 1.417;
         }
-        if ($type =~ m/^pressure([0-9]+)$/) {
+        if ($type =~ m/^pressure([0-9.]+)$/) {
           if ( $voltage > 4.95 ) {
             ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
             logmsg 2, "WARNING on $LinkDev:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
@@ -1310,7 +1312,7 @@ sub monitor_mqttsub {
             # 1.417psi/metre
             $voltage = $voltage / 1.417;
           }
-          if ($type =~ m/^pressure([0-9]+)$/) {
+          if ($type =~ m/^pressure([0-9.]+)$/) {
             if ( $voltage > 4.95 ) {
               ### 5V with a 1% tolerance. Returning this is beyond the pressure sensors capability and must therefore be some sort of electrical short
               logmsg 2, "WARNING on $MQTTSub:$name: (query) ${voltage}V returned, this is beyond the pressure sensors capability: discarding readings. Possible electrical short.";
@@ -2204,8 +2206,8 @@ sub value_all {
       } else {
         $channel = '';
       }
-      $type        =~ s/^pressure[0-9]+$/pressure/;
-      $type        =~ s/^depth[0-9]+$/depth/;
+      $type        =~ s/^pressure[0-9.]+$/pressure/;
+      $type        =~ s/^depth[0-9.]+$/depth/;
 
       if ($type eq 'ds2401') {
         my $serial      =  $data{$address}{$type};
@@ -2377,8 +2379,8 @@ sub value {
       } else {
         $configtype  = 'NA';
       }
-      $type        =~ s/^pressure[0-9]+$/pressure/;
-      $type        =~ s/^depth[0-9]+$/depth/;
+      $type        =~ s/^pressure[0-9.]+$/pressure/;
+      $type        =~ s/^depth[0-9.]+$/depth/;
 
       if ($type eq 'ds2401') {
         my $serial      =  $data{$address}{$type};
@@ -2583,8 +2585,8 @@ sub RecordRRDs {
         next;
       }
 
-      $type        =~ s/^pressure[0-9]+$/pressure/;
-      $type        =~ s/^depth[0-9]+$/depth/;
+      $type        =~ s/^pressure[0-9.]+$/pressure/;
+      $type        =~ s/^depth[0-9.]+$/depth/;
       $type        = 'temperature' if ( ($type eq 'ds18b20') || ($type eq 'ds1820') );
 
       $rrdfile = "$RRDsDir/" . lc($name) . ".rrd";
