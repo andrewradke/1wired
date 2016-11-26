@@ -1756,7 +1756,7 @@ sub query_device {
       return 'ERROR' if (! Reset());
       $returned = LinkData("b55${address}B800\n");	# byte mode, match rom, address, Recall Memory page 00 to scratch pad
       if (! CheckData($returned)) {
-        logmsg 2, "ERRORon $LinkDev:$data{$address}{name} requesting recall memory page 0 to scratch pad.";
+        logmsg 2, "ERROR on $LinkDev:$data{$address}{name} requesting recall memory page 0 to scratch pad.";
         return 'ERROR';
       }
       if ($returned ne "55${address}B800") {

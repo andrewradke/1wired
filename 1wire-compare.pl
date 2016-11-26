@@ -3,10 +3,10 @@
 use strict;
 use Getopt::Long;
 
-my ($device1, $device2, $test1, $test2, $test, $range, $warn, $critical, $verbose, $help);
+my ($device1, $device2, $test1, $test2, $test, $range, $warn, $critical, $percent, $verbose, $help);
 my ($warntext, $criticaltext);
 my $status;
-my $difference;
+my ($difference, $absdifference);
 my ($device1data, $device2data);
 
 Getopt::Long::Configure('bundling');
@@ -19,6 +19,7 @@ GetOptions(
 	"R=s"	=> \$range,	"range=s"	=> \$range,
 	"w=s"	=> \$warn,	"warn=s"	=> \$warn,
 	"c=s"	=> \$critical,	"critical=s"	=> \$critical,
+	"p"	=> \$percent,	"percent"	=> \$percent,
 	"v"	=> \$verbose,	"verbose"	=> \$verbose,
 	"h"	=> \$help,	"help"		=> \$help,
 	);
@@ -29,10 +30,10 @@ $help = 1 if ( ($test) && ($test1 || $test2) );
 unless ($range) {
   $help = 1 unless (($warn && $critical));
 }
-$warntext = $warn;
+$warntext     = $warn;
 $criticaltext = $critical;
-$warntext = "+-$warn" if ($warn =~ m/^\d+$/);
-$criticaltext = "+-$critical" if ($critical =~ m/^\d+$/);
+$warntext     = "+-$warn"     if ($warn =~ m/^\d+(.\d+|)$/);
+$criticaltext = "+-$critical" if ($critical =~ m/^\d+(.\d+|)$/);
 
 if ($help) {
   print "Valid options:
@@ -44,6 +45,7 @@ if ($help) {
 	-R|--range=<range>	# REQUIRED unless warn AND critical supplied
 	-w|--warn=<range>	# Use NA if no warn value to be used
 	-c|--critical=<range>	# Use NA if no critical value to be used
+	-p|--percent		# Compare percentages instead of raw values
 	-v|--verbose
 	-h|--help
 
@@ -64,7 +66,14 @@ unless (($device1data =~ m/^-?\d+(\.\d+|)$/) && ($device2data =~ m/^-?\d+(\.\d+|
   print "Unrecognised values returned by query: $device1: $device1data ; $device2: $device2data\n";
   exit 3;
 }
-$difference = $device1data - $device2data;
+
+if ($percent) {
+  $difference = ( ( $device1data / $device2data ) - 1 ) * 100;
+  $absdifference = $difference;
+} else {
+  $difference = $device1data - $device2data;
+  $absdifference = $difference;
+}
 $difference *= -1 if ( $difference < 0 );
 
 if ($range) {
@@ -81,7 +90,7 @@ if ($range) {
       print "Unrecognised range: $critical\n";
       exit 3;
     } else {
-      print "CRITICAL: " . restrict_num_decimal_digits($difference, 2) . " ($device1: $device1data - $device2: $device2data is $criticaltext)\n";
+      print "CRITICAL: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data > $criticaltext", ($percent) ? "%" : "" , ")\n";
       exit 2;
     }
   } else {
@@ -95,14 +104,14 @@ if ($range) {
         print "Unrecognised range: $warn\n";
         exit 3;
       } else {
-        print "WARNING: " . restrict_num_decimal_digits($difference, 2) . " ($device1: $device1data - $device2: $device2data is $warntext)\n";
+        print "WARNING: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data > $warntext", ($percent) ? "%" : "" , ")\n";
         exit 1;
       }
     } else {
       if (lc($warn) eq 'na') {
-        print "OK: " . restrict_num_decimal_digits($difference, 2) . " ($device1: $device1data - $device2: $device2data not $criticaltext)\n";
+        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data < $criticaltext", ($percent) ? "%" : "" , ")\n";
       } else {
-        print "OK: " . restrict_num_decimal_digits($difference, 2) . " ($device1: $device1data - $device2: $device2data not $warntext)\n";
+        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data < $warntext", ($percent) ? "%" : "" , ")\n";
       }
       exit 0;
     }
@@ -114,19 +123,19 @@ if ($range) {
 sub CheckRange {
   my $range = shift;
   if ($range =~ s/^(\+-|)(\d+(\.\d+|))$/$2/) {
-    if ((($device1data - $device2data) >= $range) || (($device2data - $device1data) >= $range)) {
+    if ($difference >= $range) {
       return "BAD";
     } else {
       return "OK";
     }
   } elsif ($range =~ s/^>(\d+(\.\d+|))$/$1/) {
-    if (($device1data - $device2data) > $range) {
+    if (($absdifference) > $range) {
       return "BAD";
     } else {
       return "OK";
     }
   } elsif ($range =~ s/^<(\d+(\.\d+|))$/$1/) {
-    if (($device1data - $device2data) < $range) {
+    if (($absdifference) < $range) {
       return "BAD";
     } else {
       return "OK";
