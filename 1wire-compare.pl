@@ -68,7 +68,7 @@ unless (($device1data =~ m/^-?\d+(\.\d+|)$/) && ($device2data =~ m/^-?\d+(\.\d+|
 }
 
 if ($percent) {
-  $difference = ( ( $device1data / $device2data ) - 1 ) * 100;
+  $difference = ( ( 1 - $device2data / $device1data ) * 100 );
   $absdifference = $difference;
 } else {
   $difference = $device1data - $device2data;
