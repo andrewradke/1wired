@@ -90,7 +90,7 @@ if ($range) {
       print "Unrecognised range: $critical\n";
       exit 3;
     } else {
-      print "CRITICAL: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data > $criticaltext", ($percent) ? "%" : "" , ")\n";
+      print "CRITICAL: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data" , ($percent) ? "," : " -" , " $device2:$test2 $device2data > $criticaltext", ($percent) ? "%" : "" , ")\n";
       exit 2;
     }
   } else {
@@ -104,14 +104,14 @@ if ($range) {
         print "Unrecognised range: $warn\n";
         exit 3;
       } else {
-        print "WARNING: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data > $warntext", ($percent) ? "%" : "" , ")\n";
+        print "WARNING: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data" , ($percent) ? "," : " -" , " $device2:$test2 $device2data > $warntext", ($percent) ? "%" : "" , ")\n";
         exit 1;
       }
     } else {
       if (lc($warn) eq 'na') {
-        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data < $criticaltext", ($percent) ? "%" : "" , ")\n";
+        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data" , ($percent) ? "," : " -" , " $device2:$test2 $device2data < $criticaltext", ($percent) ? "%" : "" , ")\n";
       } else {
-        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data " , ($percent) ? "%" : "-" , " $device2:$test2 $device2data < $warntext", ($percent) ? "%" : "" , ")\n";
+        print "OK: " . restrict_num_decimal_digits($difference, 2) , ($percent) ? "%" : "" , " ($device1:$test1 $device1data" , ($percent) ? "," : " -" , " $device2:$test2 $device2data < $warntext", ($percent) ? "%" : "" , ")\n";
       }
       exit 0;
     }
