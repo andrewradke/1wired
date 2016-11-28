@@ -2917,10 +2917,11 @@ sub ParseConfigFile {
   close(CONFIG);
   $option = undef;
   $value = undef;
-} ### END ParseDeviceFile
+} ### END ParseConfigFile
 
 
 sub ParseDeviceFile {
+  my ($address, $name, $type);
   my $errors = 0;
   my %ListedDevices;
   unless (open(DEVICES, '<', $DeviceFile)) {
@@ -2932,20 +2933,31 @@ sub ParseDeviceFile {
     s/\w*#.*//;
     next if (m/^\s*$/);
 #    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
-    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
-      if (! defined($deviceDB{$1})) {
-        $deviceDB{$1} = &share( {} );
+    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9:-]+)\s*$/) {
+      ($address, $name, $type) = ($1, $2, $3);
+      if (! defined($deviceDB{$address})) {
+        $deviceDB{$address} = &share( {} );
       }
-      $deviceDB{$1}{name} = $2;
-      $deviceDB{$1}{type} = $3;
-      $ListedDevices{$1} = $2;
+      $deviceDB{$address}{name} = $name;
+      $deviceDB{$address}{type} = $type;
+      $ListedDevices{$address} = $name;
 
-      if (! defined($data{$1})) {	# Check this seperately as assigning $deviceDB to $data otherwise if this is being run from a SIGHUP would cause existing values in $data to be lost
-        $data{$1} = &share( {} );
+      if (! defined($data{$address})) {	# Check this seperately as assigning $deviceDB to $data otherwise if this is being run from a SIGHUP would cause existing values in $data to be lost
+        $data{$address} = &share( {} );
       }
-      $data{$1}{name} = $2;
-      $data{$1}{type} = $3;
-      logmsg 4, "Device configured: address: $1, name: $2, type: $3";
+      if ( ( defined($data{$address}{name}) ) && ( $data{$address}{name} ne $name ) ) {
+        logmsg 4, "Device $address name changed from '$data{$address}{name}' to '$name'";
+      }
+      $data{$address}{name} = $name;
+      if ( ( defined($data{$address}{type}) ) && ( $data{$address}{type} ne $type ) ) {
+        logmsg 4, "Device $address type changed from '$data{$address}{type}' to '$type'";
+      }
+      $data{$address}{type} = $type;
+      logmsg 4, "Device configured: address: $address, name: $name, type: $type";
+      if ( $type =~ m/^homie:/ ) {
+        $data{$address}{type} = 'homie';
+        $deviceDB{$address}{type} =~ s/^homie://;
+      }
     } else {
       logmsg 1, "ERROR: Unrecognised line in devices file: '$_'";
       $errors = 1;
@@ -2963,7 +2975,7 @@ sub ParseDeviceFile {
       $data{$_}{name} = $_;
     }
   }
-}
+} ### END ParseDeviceFile
 
 
 sub LinkConnect {
