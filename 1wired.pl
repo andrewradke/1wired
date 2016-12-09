@@ -2932,8 +2932,7 @@ sub ParseDeviceFile {
     chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
-#    if (m/^([0-9A-Fa-f]{16})\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9-]+)\s*$/) {
-    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9:-]+)\s*$/) {
+    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9.:-]+)\s*$/) {
       ($address, $name, $type) = ($1, $2, $3);
       if (! defined($deviceDB{$address})) {
         $deviceDB{$address} = &share( {} );
