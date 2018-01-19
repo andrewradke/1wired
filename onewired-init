@@ -20,10 +20,10 @@
 # PATH should only include /usr/* if it runs after the mountnfs.sh script
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 DESC="Description of the service"
-NAME=1wired
+NAME=onewired
 USER=onewired
 RUNDIR=/var/run/$NAME
-DAEMON=/usr/local/sbin/1wired.pl
+DAEMON=/usr/local/sbin/onewired
 DAEMON_ARGS=""
 PIDFILE="$RUNDIR/$NAME.pid"
 SCRIPTNAME=/etc/init.d/$NAME
@@ -98,7 +98,7 @@ do_stop()
                 onewired_wait_stop $?
                 return $?
         elif [ $AP_RET = 1 ] ; then
-                log_warning_msg "There are processes named '1wired' running which do not match your pid file which are left untouched in the name of safety, Please review the situation by hand".
+                log_warning_msg "There are processes named 'onewired' running which do not match your pid file which are left untouched in the name of safety, Please review the situation by hand".
                 return 2
         fi
 

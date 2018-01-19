@@ -54,11 +54,11 @@ if ($help) {
 }
 
 if ($test) {
-  $device1data=`/usr/local/bin/1wire-query.pl --device="$device1" --test="$test"`;
-  $device2data=`/usr/local/bin/1wire-query.pl --device="$device2" --test="$test"`;
+  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test"`;
+  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test"`;
 } else {
-  $device1data=`/usr/local/bin/1wire-query.pl --device="$device1" --test="$test1"`;
-  $device2data=`/usr/local/bin/1wire-query.pl --device="$device2" --test="$test2"`;
+  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test1"`;
+  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test2"`;
 }
 chomp($device1data);
 chomp($device2data);

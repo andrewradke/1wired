@@ -6,7 +6,7 @@ use Getopt::Long;
 
 my ($device, $command, $test, $statecheck, $ConfigFile, $timeout, $verbose, $MinuteMin, $help);
 
-$ConfigFile = '/etc/1wired/1wired.conf';
+$ConfigFile = '/etc/onewired/onewired.conf';
 $timeout = 10;
 
 Getopt::Long::Configure('bundling');
@@ -22,10 +22,10 @@ GetOptions(
 	"h"	=> \$help,		"help"		=> \$help,
 	);
 
-my $DeviceFile = '/etc/1wired/devices';
-my $LowStateFile = '/etc/1wired/low_state';
+my $DeviceFile = '/etc/onewired/devices';
+my $LowStateFile = '/etc/onewired/low_state';
 my $UseRRDs = 0;
-my $RRDsDir = "/var/1wired";
+my $RRDsDir = "/var/onewired";
 my $hostname = 'localhost';
 my $ListenPort = 2345;
 
@@ -124,7 +124,7 @@ if ($statecheck) {
 
 # Just in case of problems, let's not hang
 $SIG{'ALRM'} = sub {
-        print ("No response from 1wired server (alarm)\n");
+        print ("No response from onewired server (alarm)\n");
         exit 3;
 };
 alarm($timeout);
@@ -195,7 +195,7 @@ if ($ListenPort =~ m/^\d+$/) {
 
 $socket->recv($return,255);
 chomp($return);
-unless ($return eq '220 1wired') {
+unless ($return eq '220 onewired') {
   print "Unexpected reply from monitoring daemon:\n$return\n";
   exit 2;
 }

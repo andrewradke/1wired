@@ -34,7 +34,7 @@ if ($help) {
 }
 
 my $ReturnedData;
-$ReturnedData=`/usr/local/bin/1wire-query.pl --device="$device1" --test="$test1" --state || /usr/local/bin/1wire-query.pl --device="$device2" --test="$test2" --state`;
+$ReturnedData=`/usr/local/bin/onewire-query --device="$device1" --test="$test1" --state || /usr/local/bin/onewire-query --device="$device2" --test="$test2" --state`;
 chomp($ReturnedData);
 if ($? == -1) {
   print "ERROR: check failed to run: $!\n";

@@ -33,7 +33,7 @@ my @threadNames : shared;
 
 
 ### Begin processing config file
-my $ConfigFile = '/etc/1wired/1wired.conf';
+my $ConfigFile = '/etc/onewired/onewired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
 my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
@@ -53,6 +53,7 @@ my %mstype = (
         '25' => 'pressure200',
         '26' => 'pressure72.5',
         '27' => 'pressure145',
+        '28' => 'pressure174',
 
         '30' => 'bme280',
         '31' => 'bmp280',
@@ -274,7 +275,7 @@ sub report {
   my $select = IO::Select->new($socket);
   my $command;
 
-  $socket->send("220 1wired\n");
+  $socket->send("220 onewired\n");
   if ($select->can_read(1)) {
     $socket->recv($command,128);
   }
@@ -510,7 +511,8 @@ sub monitor_linkhub {
           next;
         }
         if ($returned =~ m/^.$/) {			# Error searching so we'll just move on in case there are more devices
-          logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'";
+          logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'. Sleeping for 3 seconds before retrying";
+          sleep 3;					# Wait for 3 seconds before retrying
           $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
           next;
         }
@@ -523,7 +525,8 @@ sub monitor_linkhub {
         }
         if ($returned =~ s/^(..)(..)(..)(..)(..)(..)(..)(..)$/$8$7$6$5$4$3$2$1/) {
           if ($returned eq '0000000000000000') {
-            logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'";
+            logmsg 1, "ERROR on $LinkDev: Device search returned '$returned'. Sleeping for 3 seconds before retrying";
+            sleep 3;					# Wait for 3 seconds before retrying
             $MastersData{$LinkDev}{SearchNow} = 1 if ($ReSearchOnError);
             next;
           }
@@ -999,7 +1002,7 @@ sub monitor_linkhub {
     ### End query of devices on LinkHub
 
     $count = 0 if ($count > 1);
-    if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the 1wire master
+    if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the onewire master
       logmsg 5, "INFO: Finished loop for $LinkDev, closing socket.";
       close ($socket) if (defined($socket));
       $socket = undef;
@@ -2600,7 +2603,7 @@ sub RecordRRDs {
           @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:30");
         } elsif ($type eq 'homie') {
           foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
-            if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
+            if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
               @rrdcmd = (@rrdcmd, "DS:$nodeid:COUNTER:300:U:U");
             } else {
               @rrdcmd = (@rrdcmd, "DS:$nodeid:GAUGE:300:U:U");
@@ -2658,8 +2661,15 @@ sub RecordRRDs {
         $rrdcmd .= ":" . ( (defined($data{$address}{rain})) ? $data{$address}{rain} : 'U' );
       } elsif ($type eq 'homie') {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
-          if ($data{$address}{node}{$nodeid}{type} eq 'counter') {
+          if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
             $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
+          } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+            $rrdcmd .= ":";
+            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+              $rrdcmd .= ( ($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1 );
+            } else {
+              $rrdcmd .= 'U';
+            }
           } else {
             $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? $data{$address}{node}{$nodeid}{value} : 'U' );
           }
@@ -2770,8 +2780,8 @@ sub monitor_agedata {
 
 
 sub ParseConfigFile {
-  $LogFile = '/var/log/1wired/1wired.log';
-  $DeviceFile = '/etc/1wired/devices';
+  $LogFile = '/var/log/onewired/onewired.log';
+  $DeviceFile = '/etc/onewired/devices';
   $PidFile = '';
   $ListenPort = 2345;
   @LinkHubs = ();
@@ -2783,7 +2793,7 @@ sub ParseConfigFile {
   $SlowDown = 0;
   $LogLevel = 5;
   $UseRRDs = 0;
-  $RRDsDir = '/var/1wired';
+  $RRDsDir = '/var/onewired';
   $AutoSearch = 1;
   $ReSearchOnError = 1;
   $UpdateMSType = 0;
@@ -2900,7 +2910,7 @@ sub ParseConfigFile {
           print STDERR "RunAsDaemon value defined in config file ($value) is not valid. Using default ($RunAsDaemon).\n";
         }
       } elsif ($option eq 'StateFile') {
-        # Option not used by 1wired but possibly by other programs
+        # Option not used by onewired but possibly by other programs
       } elsif ($option eq 'umask') {
         if ($value =~ m/^0[01][0-7][0-7]$/) {
           $umask = $value;
@@ -2932,7 +2942,7 @@ sub ParseDeviceFile {
     chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
-    if (m/^([0-9A-Za-z-]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9.:-]+)\s*$/) {
+    if (m/^([A-Za-z0-9-_]+)\s+([A-Za-z0-9-_]+)\s+([A-Za-z0-9.:-]+)\s*$/) {
       ($address, $name, $type) = ($1, $2, $3);
       if (! defined($deviceDB{$address})) {
         $deviceDB{$address} = &share( {} );
@@ -3261,12 +3271,28 @@ sub ChangeMSType {
       sleep 0.01;						# wait 10ms
       next if (! Reset());
 
-      $returned = LinkData("b55${address}BE03FF\n");		# byte mode, match rom, address, read scratch BE, register 03
+      $returned = LinkData("b55${address}BE03FFFFFFFFFFFFFFFFFF\n");
+      # byte mode, match rom, address, read scratch pad for memory page 03
       if (! CheckData($returned)) {
         logmsg 2, "ERROR on $main::LinkDev:$name: Error requesting reading scratch pad for memory page 03.";
         next;
       }
-      next if ($returned ne "55${address}BE03${type}");
+
+      if ( (length($returned) != 40) || (! ($returned =~ s/^55${address}BE03([A-F0-9]{18})$/$1/)) ) {
+        logmsg 3, "ERROR on $main::LinkDev:$name: Query of MS type returned: $returned";
+        next;
+      }
+      if ( $returned =~ m/^F{18}$/ ) {
+        logmsg 4, "ERROR on $main::LinkDev:$name: Got only F's on query of MS type.";
+        next;
+      }
+      if (! CRCow($returned) ) {
+        logmsg 1, "ERROR on $main::LinkDev:$name: CRC failed on query of MS type.";
+        next;
+      }
+      $returned =~ s/[0-9A-F]{16}$//;		# we only need the first byte (2 chars)
+      next if ($returned ne "${type}");
+
       sleep 0.01;						# wait 10ms
       next if (! Reset());
       $returned = LinkData("b55${address}4803\n");		# byte mode, match rom, address, copy scratch 48, register 03
