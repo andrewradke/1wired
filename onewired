@@ -1505,7 +1505,7 @@ sub monitor_homiesub {
             $data{$address}{signal}	= '' unless (defined($data{$address}{signal}));
             $data{$address}{online}	= '' unless (defined($data{$address}{online}));
           }
-          $data{$address}{name} = $address;	# This can be overridden by a name value later
+          $data{$address}{name}   = $address;	# This can be overridden by a name value later
           $data{$address}{master} = $HomieSub;
         }
 
@@ -1528,23 +1528,26 @@ sub monitor_homiesub {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
           } elsif ( $key eq "signal" ) {
-            # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
-            logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm" if ( $value < -93 );
-          } elsif ( $key eq "nodes" ) {
-            if ( ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
-              logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
+            if ( ( $value < -93 ) && ($data{$address}{localip} ne '') ) {	# if it doesn't have an IP address it is probably a LoRa radio
+              # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
+              logmsg 1, "$HomieSub:$data{$address}{name} $data{$address}{localip}";
+              logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm";
             }
-            foreach my $node (split(/,/, $value)) {
-              my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
-              if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
-                $nodeid = 'depth';
-                $property = 'm';
+          } elsif ( $key eq "nodes" ) {
+            if ( $data{$address}{$key} ne $value ) {
+              logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from '$data{$address}{$key}' to '$value'" if ( $data{$address}{$key} ne '' );
+              foreach my $node (split(/,/, $value)) {
+                my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
+                if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
+                  $nodeid = 'depth';
+                  $property = 'm';
+                }
+                if (! defined($data{$address}{node}{$nodeid})) {
+                  $data{$address}{node}{$nodeid} = &share( {} );
+                }
+                $data{$address}{node}{$nodeid}{type}  = $property;
+                $data{$address}{node}{$nodeid}{value} = 'NA';
               }
-              if (! defined($data{$address}{node}{$nodeid})) {
-                $data{$address}{node}{$nodeid} = &share( {} );
-              }
-              $data{$address}{node}{$nodeid}{type}  = $property;
-              $data{$address}{node}{$nodeid}{value} = 'NA';
             }
           } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
             logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
@@ -1804,7 +1807,9 @@ sub query_device {
       }
     }
   } or do {
-    logmsg 2, "ERROR on $LinkDev: died during eval, last data: '$returned'";
+    logmsg 1, "ERROR on $LinkDev: died during eval, last data: '$returned'. Closing connection.";
+    close ($socket) if (defined($socket));
+    $socket = undef;
     return 'ERROR';
   };
 }
@@ -2609,6 +2614,7 @@ sub RecordRRDs {
               @rrdcmd = (@rrdcmd, "DS:$nodeid:GAUGE:300:U:U");
             }
           }
+          @rrdcmd = (@rrdcmd, "DS:signal:GAUGE:300:U:U");
         } elsif ($type eq 'ds2423') {
           @rrdcmd = (@rrdcmd, "DS:channelA:COUNTER:300:U:U");
           @rrdcmd = (@rrdcmd, "DS:channelB:COUNTER:300:U:U");
@@ -2674,6 +2680,7 @@ sub RecordRRDs {
             $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? $data{$address}{node}{$nodeid}{value} : 'U' );
           }
         }
+        $rrdcmd .= ":" . ( ( (defined($data{$address}{signal})) && ($data{$address}{signal} ne '')) ? $data{$address}{signal} : 'U' );
       } elsif ($type eq 'ds2423') {
         $rrdcmd .= ":" . ( (defined($data{$address}{channelA})) ? $data{$address}{channelA} : 'U' );
         $rrdcmd .= ":" . ( (defined($data{$address}{channelB})) ? $data{$address}{channelB} : 'U' );
@@ -3056,9 +3063,10 @@ sub LinkData {
           last if ($returned =~ m/.[\r\n\0]/);
         }
       } else {
-        logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection.";
+        logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection and sleeping for 10 seconds.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
+        sleep 10;
       }
     }
   } elsif ($main::MasterType eq 'LinkSerial') {
