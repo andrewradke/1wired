@@ -1,0 +1,16 @@
+[Unit]
+Description=One Wire daemon
+After=network.target
+
+[Service]
+RuntimeDirectory=onewired
+WorkingDirectory=/var/run/onewired
+ExecStart=/usr/local/sbin/onewired
+Restart=on-failure
+Type=forking
+PIDFile=/var/run/onewired/onewired.pid
+User=onewired
+
+[Install]
+WantedBy=multi-user.target
+Alias=onewired.service
