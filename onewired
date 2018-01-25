@@ -730,9 +730,11 @@ sub monitor_linkhub {
                 logmsg 1, "WARNING on $LinkDev:$name: (query) Spurious rain reading ($channelB): keeping previous data ($data{$address}{rain})";
               } else {
                $data{$address}{rain} = $channelB;;
+               $data{$address}{age} = time();
               }
+            } else {
+              $data{$address}{age} = time();
             }
-            $data{$address}{age} = time();
 
           } elsif ( ($type eq 'temperature') || ($type eq 'ds18b20') || ($type eq 'ds1820') ) {
             $temperature = $returned;
@@ -1295,7 +1297,7 @@ sub monitor_mqttsub {
 
           if (! $localaddresses{$address}) {
             $localaddresses{$address} = 1;
-            logmsg 2, "Found $address ($name) on $MQTTSub";
+            logmsg 5, "Found $address ($name) on $MQTTSub";
             push (@{$addresses{$MQTTSub}}, $address);
             $MastersData{$MQTTSub}{SearchTime} = time();
           }
@@ -1493,7 +1495,7 @@ sub monitor_homiesub {
         if ( (! defined($data{$address}{master}) ) || ( $data{$address}{master} ne $HomieSub ) ) {
           if ( (! $localaddresses{$address}) && ($value ne "(null)") ) {
             $localaddresses{$address} = 1;
-            logmsg 2, "Found $address on $HomieSub";
+            logmsg 5, "Found $address on $HomieSub";
             push (@{$addresses{$HomieSub}}, $address);
             $MastersData{$HomieSub}{SearchTime} = time();
             $data{$address}{type}	= 'homie';
