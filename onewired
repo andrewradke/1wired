@@ -19,7 +19,7 @@ use POSIX ":sys_wait_h";
 
 use Proc::Daemon;
 
-my $version = '1.9.3';
+my $version = '1.9.4';
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
 
@@ -165,8 +165,8 @@ foreach my $HomieSub (@HomieSubs) {
 $threads{threadstatus} = shared_clone(threads->create(\&monitor_threadstatus));
 $threadNames[$threads{threadstatus}->tid] = "Threads status";
 
-#$threads{agedata} = shared_clone(threads->create(\&monitor_agedata));
-#$threadNames[$threads{agedata}->tid] = "Age Data";
+$threads{agedata} = shared_clone(threads->create(\&monitor_agedata));
+$threadNames[$threads{agedata}->tid] = "Age Data";
 
 ### End of monitoring thread
 
@@ -320,7 +320,7 @@ sub monitor_linkhub {
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_linkhub thread for $LinkDev.");
     Reset();
-    $returned = LinkData("\n");		# Discard returned reset data
+    #$returned = LinkData("\n");		# Discard returned reset data
     $socket->close if (defined($socket));;
     threads->exit();
   };
@@ -1873,14 +1873,16 @@ sub list {
   }
   $output .= "     ---------------------------------------------------------------------     \n";
   foreach my $LinkDev (sort(keys(%addresses))) {
-    my $age = 'NA';
+    my $age     = 'NA';
+    my $agedata = 'NA';
     if (defined($MastersData{$LinkDev}{SearchTime})) {
       $age = $MastersData{$LinkDev}{SearchTime};
+      $agedata = (time() - $agedata{$LinkDev}) if (defined($agedata{$LinkDev}));
       if ( $age =~ m/^\d+$/ ) {
         $age = time - $age;
-        $output .= sprintf "%40s last searched %d seconds ago\n", $LinkDev, $age;
+        $output .= sprintf "%20s last searched %d seconds ago, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       } else {
-        $output .= sprintf "%40s search unknown: %s\n", $LinkDev, $age;
+        $output .= sprintf "%20s search unknown: %s, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       }
     }
   }
@@ -2355,15 +2357,17 @@ sub value_all {
   }
 
   $output .= "     ---------------------------------------------------------------------     \n";
-  foreach $LinkDev (sort(keys(%addresses))) {
-    $age = 'NA';
+  foreach my $LinkDev (sort(keys(%addresses))) {
+    my $age     = 'NA';
+    my $agedata = 'NA';
     if (defined($MastersData{$LinkDev}{SearchTime})) {
       $age = $MastersData{$LinkDev}{SearchTime};
+      $agedata = (time() - $agedata{$LinkDev}) if (defined($agedata{$LinkDev}));
       if ( $age =~ m/^\d+$/ ) {
         $age = time - $age;
-        $output .= sprintf "%40s last searched %d seconds ago\n", $LinkDev, $age;
+        $output .= sprintf "%20s last searched %d seconds ago, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       } else {
-        $output .= sprintf "%40s search unknown: %s\n", $LinkDev, $age;
+        $output .= sprintf "%20s search unknown: %s, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       }
     }
   }
@@ -2790,9 +2794,9 @@ sub monitor_agedata {
   while(1) {
     foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs) {
       $age = (time() - $agedata{$LinkDev});
-      logmsg (1,"Age data for $LinkDev: $age seconds");
+      logmsg (4,"Age data for $LinkDev: $age seconds");
       if ($age > 15) {
-        logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale.");
+        logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale. Restarting thread.");
         $threads{$LinkDev}->kill('HUP');
       }
     }
