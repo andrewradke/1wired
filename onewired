@@ -1537,7 +1537,7 @@ sub monitor_homiesub {
             if ( $data{$address}{$key} ne $value ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from '$data{$address}{$key}' to '$value'" if ( $data{$address}{$key} ne '' );
               my %oldnodes;
-              foreach my $nodeid (keys($data{$address}{node})) {
+              foreach my $nodeid (keys(%{$data{$address}{node}})) {
                 $oldnodes{$nodeid} = 1;
               }
 
@@ -2795,9 +2795,10 @@ sub monitor_agedata {
     foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs) {
       $age = (time() - $agedata{$LinkDev});
       logmsg (4,"Age data for $LinkDev: $age seconds");
-      if ($age > 15) {
+      if ($age > 60) {
         logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale. Restarting thread.");
         $threads{$LinkDev}->kill('HUP');
+        $agedata{$LinkDev} = time();
       }
     }
     sleep 1;
@@ -3018,6 +3019,7 @@ sub LinkConnect {
   my $socket;
   my $retry = 0;
   logmsg 4, "Connecting to $main::MasterType $LinkDev";
+  $agedata{$LinkDev} = time();
 
   $socket = undef;
   while (! $socket) {
