@@ -1536,17 +1536,31 @@ sub monitor_homiesub {
           } elsif ( $key eq "nodes" ) {
             if ( $data{$address}{$key} ne $value ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from '$data{$address}{$key}' to '$value'" if ( $data{$address}{$key} ne '' );
+              my %oldnodes;
+              foreach my $nodeid (keys($data{$address}{node})) {
+                $oldnodes{$nodeid} = 1;
+              }
+
               foreach my $node (split(/,/, $value)) {
                 my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
+                if ( defined($oldnodes{$nodeid}) ) {
+                  delete $oldnodes{$nodeid};
+                }
                 if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
                   $nodeid = 'depth';
                   $property = 'm';
                 }
                 if (! defined($data{$address}{node}{$nodeid})) {
                   $data{$address}{node}{$nodeid} = &share( {} );
+                  logmsg 2, "INFO on $HomieSub:$data{$address}{name}: node $nodeid added" if ( $data{$address}{$key} ne '' );
                 }
                 $data{$address}{node}{$nodeid}{type}  = $property;
                 $data{$address}{node}{$nodeid}{value} = 'NA';
+              }
+
+              foreach my $nodeid (keys(%oldnodes)) {
+                delete $data{$address}{node}{$nodeid};
+                logmsg 2, "INFO on $HomieSub:$data{$address}{name}: node $nodeid removed";
               }
             }
           } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
@@ -1565,6 +1579,7 @@ sub monitor_homiesub {
           # This should've been defined when receiving the $nodes property above but check in case that hasn't been recieved.
           if (! defined($data{$address}{node}{$nodeid})) {
             $data{$address}{node}{$nodeid} = &share( {} );
+            logmsg 2, "INFO on $HomieSub:$data{$address}{name}: adding unexpected node $nodeid";
           }
           $data{$address}{node}{$nodeid}{type} = $property;
           $data{$address}{node}{$nodeid}{value} = $value;
@@ -2246,7 +2261,7 @@ sub value_all {
       } elsif ($type eq 'homie') {
         $OutputData{$name} = sprintf "%-18s - ", $name;
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
-          $OutputData{$name} .= sprintf "%11s: ", $nodeid;
+          $OutputData{$name} .= sprintf " %11s: ", $nodeid;
           if (defined($data{$address}{node}{$nodeid}{value}) ) {
             if ($nodeid eq 'counter' ) {
               $OutputData{$name} .= sprintf "%5i", $data{$address}{node}{$nodeid}{value};
