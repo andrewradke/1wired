@@ -729,8 +729,8 @@ sub monitor_linkhub {
                 ### The counter can go backwards if it wraps so only check for large increases
                 logmsg 1, "WARNING on $LinkDev:$name: (query) Spurious rain reading ($channelB): keeping previous data ($data{$address}{rain})";
               } else {
-               $data{$address}{rain} = $channelB;;
-               $data{$address}{age} = time();
+                $data{$address}{rain} = $channelB;;
+                $data{$address}{age} = time();
               }
             } else {
               $data{$address}{age} = time();
@@ -892,7 +892,7 @@ sub monitor_linkhub {
 
             $voltage =~ s/^(..)(..)$/$2$1/;
             $voltage = hex $voltage;
-            $voltage = 0 if ($voltage == 1023);	# 1023 inidicates a short or 0V
+            $voltage = 0 if ($voltage == 1023);	# 1023 indicates a short or 0V
             $voltage = $voltage*0.01;		# each unit is 10mV
             $data{$address}{raw} = $voltage;
 
