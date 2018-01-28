@@ -1468,14 +1468,12 @@ sub monitor_homiesub {
           logmsg 2, "Removed $2 on $HomieSub";
           (@{$addresses{$HomieSub}}) = (keys(%localaddresses));
           $MastersData{$HomieSub}{SearchTime} = time();
-          delete $data{$2}{type};
-          delete $data{$2}{nodes};
-          delete $data{$2}{fwname};
-          delete $data{$2}{fwversion};
-          delete $data{$2}{localip};
-          delete $data{$2}{uptime};
-          delete $data{$2}{signal};
-          delete $data{$2}{online};
+          foreach my $nodeid (keys(%{$data{$2}{node}})) {
+            delete $data{$2}{node}{$nodeid};
+          }
+          foreach my $key (keys(%{$data{$2}})) {
+            delete $data{$2}{$key};
+          }
           delete $data{$2};
           next;
         }
@@ -1515,7 +1513,9 @@ sub monitor_homiesub {
 
         if ( $key =~ s/^\$// ) {
 
-          if ( $key eq "name" ) {
+          if ( $key eq "log" ) {
+            logmsg 2, "INFO on $HomieSub:$data{$address}{name} log: '$value'";
+          } elsif ( $key eq "name" ) {
             # Nothing to do here as it has now been set already
           } elsif ( $key eq "online" ) {
             if ( ( ( defined($data{$address}{online}) ) && ( $data{$address}{online} ne $value ) ) || ( (! defined($data{$address}{online}) ) && ( $value ne 'true' ) ) ) {
