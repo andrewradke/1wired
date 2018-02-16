@@ -1505,7 +1505,11 @@ sub monitor_homiesub {
             $data{$address}{signal}	= '' unless (defined($data{$address}{signal}));
             $data{$address}{online}	= '' unless (defined($data{$address}{online}));
           }
-          $data{$address}{name}   = $address;	# This can be overridden by a name value later
+          if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{name})) ) {
+            $data{$address}{name}   = $deviceDB{$address}{name};
+          } else {
+            $data{$address}{name}   = $address;	# This can be overridden by a name value later
+          }
           $data{$address}{master} = $HomieSub;
         }
 
@@ -1525,16 +1529,19 @@ sub monitor_homiesub {
                 logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor offline.";
               }
             }
+            $data{$address}{$key} = $value;
           } elsif ( $key eq "uptime" ) {
             if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} > $value ) ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
+            $data{$address}{$key} = $value;
           } elsif ( $key eq "signal" ) {
             if ( ( $value < -93 ) && ($data{$address}{localip} ne '') ) {	# if it doesn't have an IP address it is probably a LoRa radio
               # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
               logmsg 1, "$HomieSub:$data{$address}{name} $data{$address}{localip}";
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm";
             }
+            $data{$address}{$key} = $value;
           } elsif ( $key eq "nodes" ) {
             if ( $data{$address}{$key} ne $value ) {
               logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from '$data{$address}{$key}' to '$value'" if ( $data{$address}{$key} ne '' );
@@ -1565,10 +1572,13 @@ sub monitor_homiesub {
                 logmsg 2, "INFO on $HomieSub:$data{$address}{name}: node $nodeid removed";
               }
             }
-          } elsif ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
-            logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
+            $data{$address}{$key} = $value;
+          } else {
+            if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) ) {
+              logmsg 2, "INFO on $HomieSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
+            }
+            $data{$address}{$key} = $value;
           }
-          $data{$address}{$key} = $value;
         } else {
 
           my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
