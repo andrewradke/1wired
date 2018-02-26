@@ -2999,6 +2999,8 @@ sub ParseDeviceFile {
       $data{$address}{name} = $name;
       if ( ( defined($data{$address}{type}) ) && ( $data{$address}{type} ne $type ) ) {
         logmsg 4, "Device $address type changed from '$data{$address}{type}' to '$type'";
+        $data{$address}{mstype}      = undef;
+        $data{$address}{temperature} = undef;
       }
       $data{$address}{type} = $type;
       logmsg 4, "Device configured: address: $address, name: $name, type: $type";
@@ -3331,7 +3333,7 @@ sub ChangeMSType {
         logmsg 1, "ERROR on $main::LinkDev:$name: CRC failed on query of MS type.";
         next;
       }
-      $returned =~ s/[0-9A-F]{16}$//;		# we only need the first byte (2 chars)
+      $returned =~ s/[0-9A-F]{16}$//;				# we only need the first byte (2 chars)
       next if ($returned ne "${type}");
 
       sleep 0.01;						# wait 10ms
