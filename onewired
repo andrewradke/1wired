@@ -36,7 +36,7 @@ my @threadNames : shared;
 my $ConfigFile = '/etc/onewired/onewired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -1445,20 +1445,29 @@ sub monitor_homiesub {
   my ($type, $name);
 
   LOOP: while (1) {
+    $MastersData{$HomieSub}{Restart} = 0;		# Default to not needing to restart the subscription
     logmsg 4, "Connecting by $MasterType to $HomieSub";
-    if ( (defined($HomieHost)) && ($HomieHost ne '') ) {
-      while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-h", "$HomieHost", "-t", "$HomieTopic") ) ) {
-        logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
-        sleep 10;						# Wait for 10 seconds before retrying
-      }
-    } else {
-      while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$HomieSub") ) ) {
-        logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
-        sleep 10;						# Wait for 10 seconds before retrying
-      }
+    my $cmd = "mosquitto_sub -v -t $HomieSub";
+    $cmd .= " -h $HomieHost"   if ( (defined($HomieHost))   && ($HomieHost   ne '') );
+    $cmd .= " -u $HomieUser"   if ( (defined($HomieUser))   && ($HomieUser   ne '') );
+    $cmd .= " -P $HomiePasswd" if ( (defined($HomiePasswd)) && ($HomiePasswd ne '') );
+    while (! ($pid = open(RETURNED, "$cmd 2>&1 |") ) ) {
+      logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
+      sleep 10;						# Wait for 10 seconds before retrying
     }
 
     while ($returned = <RETURNED>) {
+      if ($MastersData{$HomieSub}{Restart}) {		# A setting has changed that requires the subscription to be restarted
+        logmsg 1, "Restart of subscription required on $MasterType $HomieSub due to config change.";
+        $MastersData{$HomieSub}{Restart} = 0;		# A restart won't be needed after this
+        kill('KILL', $pid);
+        last;
+      }
+      if ($returned =~ m/^Connection Refused: /) {
+        chomp($returned);
+        logmsg 1, "ERROR on $HomieSub: '$returned'";
+        next;
+      }
 
       $agedata{$HomieSub} = time();
 
@@ -1478,7 +1487,10 @@ sub monitor_homiesub {
           next;
         }
 
-        $value =~ s!^([^/]+)/([^/]+)/([^ ]+) !!;
+        if ( ! ($value =~ s!^([^/]+)/([^/]+)/([^ ]+) !!) ) {
+          logmsg 2, "ERROR on $HomieSub: invalid data '$returned'";
+          next;
+        }
         my $topic = $1;
         $address = $2;
         my $key = $3;
@@ -1924,6 +1936,8 @@ sub reload {
   my @OldLinkTHs = @LinkTHs;
   my @OldMQTTSubs = @MQTTSubs;
   my @OldHomieSubs = @HomieSubs;
+  my $OldHomieUser = $HomieUser;
+  my $OldHomiePasswd = $HomiePasswd;
   my $OldSleepTime = $SleepTime;
   my $OldRunAsDaemon = $RunAsDaemon;
   my $OldSlowDown = $SlowDown;
@@ -2126,6 +2140,24 @@ sub reload {
         $threadNames[$threads{$Homie}->tid] = $Homie;
       }
     }
+  }
+  if ( $OldHomieUser ne $HomieUser ) {
+    $msg = "HomieUser changed from '$OldHomieUser' to '$HomieUser', restarting Homie subscriptions.";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+    foreach my $HomieSub (@HomieSubs) {
+      $MastersData{$HomieSub}{Restart} = 1;		# We need to restart the subscription to use the new values
+    }
+    ### Set variable requiring restart of mosquitto_sub
+  }
+  if ( $OldHomiePasswd ne $HomiePasswd ) {
+    $msg = "HomiePasswd changed from '$OldHomiePasswd' to '$HomiePasswd', restarting Homie subscriptions.";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+    foreach my $HomieSub (@HomieSubs) {
+      $MastersData{$HomieSub}{Restart} = 1;		# We need to restart the subscription to use the new values
+    }
+    ### Set variable requiring restart of mosquitto_sub
   }
   if ( $OldRRDsDir ne $RRDsDir ) {			### changes automatically but needs to be checked
     # This should be done before UseRRDs as if that has been turned on it needs to also check
@@ -2827,6 +2859,8 @@ sub ParseConfigFile {
   @LinkTHs = ();
   @MQTTSubs = ();
   @HomieSubs = ();
+  $HomieUser = '';
+  $HomiePasswd = '';
   $SleepTime = 0;
   $RunAsDaemon = 1;
   $SlowDown = 0;
@@ -2859,6 +2893,10 @@ sub ParseConfigFile {
         @MQTTSubs = split(/,\s*/, $value);
       } elsif ($option eq 'HomieSubs') {
         @HomieSubs = split(/,\s*/, $value);
+      } elsif ($option eq 'HomieUser') {
+        $HomieUser = $value;
+      } elsif ($option eq 'HomiePasswd') {
+        $HomiePasswd = $value;
       } elsif ($option eq 'LinkTHs') {
         @LinkTHs = split(/,\s*/, $value);
       } elsif ($option eq 'LinkHubs') {
