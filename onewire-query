@@ -249,7 +249,7 @@ if ($name) {
 
   my ($start, $step, $data);		### RRD data
 
-  if ($age > 30) {
+  if ($age > 60) {
     print "$name data stale (" . age_text($age) . " old)\n";
     exit 3;
   }
