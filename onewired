@@ -735,7 +735,7 @@ sub monitor_linkhub {
             $data{$address}{channelB} = $channelB;
 
             if ($data{$address}{type} eq 'rain') {
-              if ( (defined($data{$address}{rain})) and ($channelB > ($data{$address}{rain} + 10)) and ((time - $data{$address}{age}) < 60) ) {
+              if ( (defined($data{$address}{rain})) and ($channelB > ($data{$address}{rain} + 10)) and ((time() - $data{$address}{age}) < 60) ) {
                 ### If the counter is more than 10 above the previous recorded value it is probably not correct
                 ### If the current data is more than 60s old record it anyway
                 ### The counter can go backwards if it wraps so only check for large increases
@@ -894,7 +894,7 @@ sub monitor_linkhub {
                 logmsg 3, "WARNING on $LinkDev:$name: (query) exactly 0C is probably not valid (0C is the default for ds2438): discarding readings.";
                 next;
             }
-            if ( ( defined($data{$address}{temperature}) ) && ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) ) {
+            if ( ( defined($data{$address}{temperature}) ) && ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time() - $data{$address}{age}) < 60) ) ) {
               ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
               ### If the current data is more than 60s old record it anyway
               logmsg 1, "ERROR on $LinkDev:$name: (query) Spurious temperature ($temperature): keeping all previous data ($data{$address}{temperature})";
@@ -1151,7 +1151,7 @@ sub monitor_linkth {
           } else {
             $data{$address}{temperature} = $temperature;
           }
-        } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
+        } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time() - $data{$address}{age}) < 60) ) {
           ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
           ### If the current data is more than 60s old record it anyway
           logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
@@ -1352,7 +1352,7 @@ sub monitor_mqttsub {
             } else {
               $data{$address}{temperature} = $temperature;
             }
-          } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time - $data{$address}{age}) < 60) ) {
+          } elsif ( ($temperature > ($data{$address}{temperature} + 10)) || ($temperature < ($data{$address}{temperature} - 10)) and ((time() - $data{$address}{age}) < 60) ) {
             ### If the temperature is more than 10 above or below the previous recorded value it is not correct and the voltage will also be wrong
             ### If the current data is more than 60s old record it anyway
             logmsg 1, "(query) Spurious temperature ($temperature) for $name: keeping previous data ($data{$address}{temperature})";
@@ -1555,7 +1555,7 @@ sub monitor_homiesub {
             }
             $data{$address}{$key} = $value;
           } elsif ( $key eq "uptime" ) {
-            if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} > $value ) ) {
+            if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} ne "" ) && ( $data{$address}{uptime} > $value ) ) {
               logmsg 1, "WARNING on $HomieSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
             }
             $data{$address}{$key} = $value;
@@ -1915,7 +1915,7 @@ sub list {
       $age = $MastersData{$LinkDev}{SearchTime};
       $agedata = (time() - $agedata{$LinkDev}) if (defined($agedata{$LinkDev}));
       if ( $age =~ m/^\d+$/ ) {
-        $age = time - $age;
+        $age = time() - $age;
         $output .= sprintf "%20s last searched %d seconds ago, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       } else {
         $output .= sprintf "%20s search unknown: %s, last data %d seconds ago\n", $LinkDev, $age, $agedata;
@@ -2352,7 +2352,9 @@ sub value_all {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           $OutputData{$name} .= sprintf " %11s: ", $nodeid;
           if (defined($data{$address}{node}{$nodeid}{value}) ) {
-            if ($nodeid eq 'counter' ) {
+            if ($data{$address}{node}{$nodeid}{value} eq 'NA') {
+              $OutputData{$name} .= "   NA";
+            } elsif ($nodeid eq 'counter' ) {
               $OutputData{$name} .= sprintf "%5i", $data{$address}{node}{$nodeid}{value};
             } else {
               $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
@@ -2451,7 +2453,7 @@ sub value_all {
       $age = $MastersData{$LinkDev}{SearchTime};
       $agedata = (time() - $agedata{$LinkDev}) if (defined($agedata{$LinkDev}));
       if ( $age =~ m/^\d+$/ ) {
-        $age = time - $age;
+        $age = time() - $age;
         $output .= sprintf "%20s last searched %d seconds ago, last data %d seconds ago\n", $LinkDev, $age, $agedata;
       } else {
         $output .= sprintf "%20s search unknown: %s, last data %d seconds ago\n", $LinkDev, $age, $agedata;
@@ -2679,13 +2681,17 @@ sub RecordInfluxDB {
     logmsg (3, "Updating InfluxDB");
 
     foreach $address (@addresses) {
-      $age         = time - $data{$address}{age};
+      $name        = $data{$address}{name};
+      $type        = $data{$address}{type};
+      if (! defined($data{$address}{age}) ) {
+        logmsg 1, "ERROR for $name: No data for InfluxDB update. Skipping.";
+        next;
+      }
+      $age         = time() - $data{$address}{age};
       if ($age > 60) {
         logmsg 1, "ERROR for $name: Age of data ($age) for InfluxDB update is > 60s. Skipping.";
         next;
       }
-      $name        = $data{$address}{name};
-      $type        = $data{$address}{type};
       #$tags->{'hostname'} = $name;
       next if (! defined($deviceDB{$address}));
       if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into InfluxDB
@@ -2908,7 +2914,7 @@ sub RecordRRDs {
       }
 
       if (defined($data{$address}{age})) {
-        $age       = time - $data{$address}{age};
+        $age       = time() - $data{$address}{age};
         if ($age > 60) {
           if ($type eq 'rain') {
             logmsg 1, "ERROR for $name: Age of data ($age) for RRD update is > 60s. Using last known value as a rain sensor.";
