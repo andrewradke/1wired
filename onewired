@@ -19,9 +19,11 @@ use POSIX ":sys_wait_h";
 
 use Proc::Daemon;
 
-my $version = '1.9.4';
+my $version = '1.9.5';
 $0 =~ s/.*\///;		# strip path from script name
 my $script = $0;
+
+my $UserAgent;
 
 ### define variables shared by all threads
 my %data : shared;
@@ -36,7 +38,7 @@ my @threadNames : shared;
 my $ConfigFile = '/etc/onewired/onewired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseInfluxDB, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseInfluxDB, $InfluxDBAddress, $InfluxDBUser, $InfluxDBPasswd, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -72,10 +74,10 @@ my %ArduinoSensors = (
 	'hcsr04' => { 'sensor1' => 'distance'},
     );
 
-#if ($UseInfluxDB) {
-#  use InfluxDB::LineProtocol qw(data2line precision=s);
-#  require InfluxDB::Writer;
-#}
+if ($UseInfluxDB) {
+  use LWP::UserAgent;
+  $UserAgent = LWP::UserAgent->new;
+}
 
 if ($UseRRDs) {
   use RRDs;
@@ -1959,6 +1961,9 @@ sub reload {
   my $OldSlowDown = $SlowDown;
   my $OldLogLevel = $LogLevel;
   my $OldUseInfluxDB = $UseInfluxDB;
+  my $OldInfluxDBAddress = $InfluxDBAddress;
+  my $OldInfluxDBUser = $InfluxDBUser;
+  my $OldInfluxDBPasswd = $InfluxDBPasswd;
   my $OldUseRRDs = $UseRRDs;
   my $OldRRDsDir = $RRDsDir;
   my $OldAutoSearch = $AutoSearch;
@@ -2176,20 +2181,35 @@ sub reload {
     }
     ### Set variable requiring restart of mosquitto_sub
   }
+  if ( $OldInfluxDBAddress ne $InfluxDBAddress ) {
+    $msg = "InfluxDBAddress changed from '$OldInfluxDBAddress' to '$InfluxDBAddress'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldInfluxDBUser ne $InfluxDBUser ) {
+    $msg = "InfluxDBUser changed from '$OldInfluxDBUser' to '$InfluxDBUser'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldInfluxDBPasswd ne $InfluxDBPasswd ) {
+    $msg = "InfluxDBPasswd changed from '$OldInfluxDBPasswd' to '$InfluxDBPasswd'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
   if ( $OldUseInfluxDB ne $UseInfluxDB ) {
     $msg = "UseInfluxDB changed from '$OldUseInfluxDB' to '$UseInfluxDB'";
     logmsg(1, $msg);
     $output .= $msg."\n";
     if ($UseInfluxDB) {
-#      eval {
-#        require InfluxDB::LineProtocol qw(data2line precision=s);
-#        require InfluxDB::Writer;
-#      } or do {
-#        $msg = "ERROR: InfluxDB perl module not available. Reverting UseInfluxDB to off.";
-#        logmsg(1, $msg);
-#        $output .= $msg."\n";
-#        $UseInfluxDB = $OldUseInfluxDB;
-#      };
+      eval {
+        use LWP::UserAgent;
+        $UserAgent = LWP::UserAgent->new;
+      } or do {
+        $msg = "ERROR: LWP perl module not available. Reverting UseInfluxDB to off.";
+        logmsg(1, $msg);
+        $output .= $msg."\n";
+        $UseInfluxDB = $OldUseInfluxDB;
+      };
       if ($UseInfluxDB) {		# If the tests passed then UseInfluxDB will still be true
         $msg = "Starting InfluxDB recording";
         logmsg(1, $msg);
@@ -2673,8 +2693,9 @@ sub RecordInfluxDB {
 
   my @addresses;
   my ($address, $name, $type, $age);
-  #my $influx_line;
+  my $influx_lines = "";
   my $metric = "onewired";
+
   while(1) {
     sleep (60 - (time() % 60));		# update once per minute and give some time for the first data
     @addresses = ();
@@ -2683,6 +2704,7 @@ sub RecordInfluxDB {
     }
 
     logmsg (3, "Updating InfluxDB");
+    my $timestamp = time();
 
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
@@ -2696,7 +2718,6 @@ sub RecordInfluxDB {
         logmsg 1, "ERROR for $name: Age of data ($age) for InfluxDB update is > 60s. Skipping.";
         next;
       }
-      #$tags->{'hostname'} = $name;
       next if (! defined($deviceDB{$address}));
       if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into InfluxDB
         logmsg (2, "homie device $name doesn't have any defined nodes, skipping InfluxDB update.");
@@ -2709,61 +2730,93 @@ sub RecordInfluxDB {
       $type        =~ s/^depth[0-9.]+$/depth/;
       $type        = 'temperature' if ( ($type eq 'ds18b20') || ($type eq 'ds1820') );
 
-      #$influx_line = "";
       if ($type eq 'temperature') {
-        insert_influx_data($metric,$name,'temperature',$data{$address}{temperature}) if (defined($data{$address}{temperature}));
+        $influx_lines .= "$metric,device=$name,sensor=temperature value=$data{$address}{temperature} $timestamp\n";
       } elsif ($type eq 'rain') {
-        insert_influx_data($metric,$name,'rain',$data{$address}{rain}) if (defined($data{$address}{rain}));
+        $influx_lines .= "$metric,device=$name,sensor=rain value=$data{$address}{rain} $timestamp\n";
       } elsif ($type eq 'homie') {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
             # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
-            insert_influx_data($metric,$name,$nodeid, (sprintf "%0.0f", $data{$address}{node}{$nodeid}{value}) ) if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA'));
+            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $data{$address}{node}{$nodeid}{value})." $timestamp\n";
+            }
           } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
-            insert_influx_data($metric,$name,$nodeid, ( ($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1 ) ) if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA'));
+            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1)." $timestamp\n";
+            }
           } else {
-            insert_influx_data($metric,$name,$nodeid, $data{$address}{node}{$nodeid}{value} ) if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA'));
+            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$data{$address}{node}{$nodeid}{value} $timestamp\n";
+            }
           }
         }
-        insert_influx_data($metric,$name,'signal',$data{$address}{signal} ) if ( (defined($data{$address}{signal})) && ($data{$address}{signal} ne ''));
+        if ( (defined($data{$address}{signal})) && ($data{$address}{signal} ne '')) {
+          $influx_lines .= "$metric,device=$name,sensor=signal value=$data{$address}{signal} $timestamp\n";
+        }
+        if ( (defined($data{$address}{latency})) && ($data{$address}{latency} ne '')) {
+          $influx_lines .= "$metric,device=$name,sensor=latency value=$data{$address}{latency} $timestamp\n";
+        }
       } elsif ($type eq 'ds2423') {
-        insert_influx_data($metric,$name,'channelA',$data{$address}{channelA}) if (defined($data{$address}{channelA}));
-        insert_influx_data($metric,$name,'channelB',$data{$address}{channelB}) if (defined($data{$address}{channelB}));
+        if ( (defined($data{$address}{channelA})) && ($data{$address}{channelA} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=channelA value=$data{$address}{channelA} $timestamp\n";
+        }
+        if ( (defined($data{$address}{channelB})) && ($data{$address}{channelB} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=channelB value=$data{$address}{channelB} $timestamp\n";
+        }
       } elsif ($type =~ m/^arduino-/) {
-        insert_influx_data($metric,$name,'temperature',$data{$address}{temperature}) if (defined($data{$address}{temperature}));
-        insert_influx_data($metric,$name,'sensor1',$data{$address}{sensor1}) if (defined($data{$address}{sensor1}));
-        insert_influx_data($metric,$name,'sensor2',$data{$address}{sensor2}) if (defined($data{$address}{sensor2}));
-        insert_influx_data($metric,$name,'sensor3',$data{$address}{sensor3}) if (defined($data{$address}{sensor3}));
-        insert_influx_data($metric,$name,'sensor4',$data{$address}{sensor4}) if (defined($data{$address}{sensor4}));
+        if ( (defined($data{$address}{temperature})) && ($data{$address}{temperature} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=temperature value=$data{$address}{temperature} $timestamp\n";
+        }
+        if ( (defined($data{$address}{sensor1})) && ($data{$address}{sensor1} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=sensor1 value=$data{$address}{sensor1} $timestamp\n";
+        }
+        if ( (defined($data{$address}{sensor2})) && ($data{$address}{sensor2} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=sensor2 value=$data{$address}{sensor2} $timestamp\n";
+        }
+        if ( (defined($data{$address}{sensor3})) && ($data{$address}{sensor3} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=sensor3 value=$data{$address}{sensor3} $timestamp\n";
+        }
+        if ( (defined($data{$address}{sensor4})) && ($data{$address}{sensor4} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=sensor4 value=$data{$address}{sensor4} $timestamp\n";
+        }
       } else {
-        insert_influx_data($metric,$name,'temperature',$data{$address}{temperature}) if (defined($data{$address}{temperature}));
-        insert_influx_data($metric,$name,$type,$data{$address}{$type}) if (defined($data{$address}{$type}));
+        if ( (defined($data{$address}{temperature})) && ($data{$address}{temperature} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=temperature value=$data{$address}{temperature} $timestamp\n";
+        }
+        if ( (defined($data{$address}{$type})) && ($data{$address}{$type} ne 'NA')) {
+          $influx_lines .= "$metric,device=$name,sensor=$type value=$data{$address}{$type} $timestamp\n";
+        }
       }
+    }
+    if ($influx_lines ne "") {
+
+      my $HTTPreq = HTTP::Request->new(POST => "$InfluxDBAddress/write?db=$metric&precision=s");
+      if ( defined($InfluxDBUser) && ($InfluxDBUser ne "") && defined($InfluxDBUser) && ($InfluxDBUser ne "") ) {
+        $HTTPreq->authorization_basic($InfluxDBUser, $InfluxDBPasswd)
+      }
+
+      $influx_lines =~ s/\n$//;	# Strip the last \n
+      $HTTPreq->content($influx_lines);
+
+      logmsg (5, "InfluxDB URL: '$InfluxDBAddress/write?db=$metric'");
+      logmsg (5, "InfluxDB write lines: '$influx_lines'");
+
+      my $HTTPresponse = $UserAgent->request($HTTPreq);
+      if ($HTTPresponse->is_success) {
+        logmsg (4, "InfluxDB updated successfully.");
+        $influx_lines = "";
+      } else {
+        logmsg (1, "InfluxDB update failed. POST error code: ".$HTTPresponse->code.", response: '".$HTTPresponse->message."'");
+        $influx_lines .= "\n";	# Add a newline back on so the next line starts in the right place
+      }
+
     }
     logmsg (3, "Finished updating InfluxDB");
     sleep 1;	# this gets us out of the first second of each minute
   }
 }
 
-sub insert_influx_data {
-  my $metric = shift;
-  my $device = shift;
-  my $sensor = shift;
-  my $value  = shift;
-
-  #my $tags = {};
-  #$tags->{'device'} = $device;
-  #$tags->{'sensor'} = $sensor;
-  #$influx_line = data2line($metric, $value, $tags);
-  if (! (my $pid = open(RETURNED, "-|", "influx", "-database", "onewired", "-precision", "m", "-execute", "INSERT $metric,device=$device,sensor=$sensor value=$value") ) ) {
-    logmsg 1, "Failed to insert data into InfluxDB.";
-    return 0;
-  }
-  while (my $returned = <RETURNED>) {
-    logmsg 3, "InfluxDB insertion returned: '$returned'";
-  }
-  return 1;
-}
 
 sub RecordRRDs {
   my $tid = threads->tid();
@@ -3028,7 +3081,7 @@ sub ParseConfigFile {
   open(CONFIG,  "<$ConfigFile") or die "Can't open config file ($ConfigFile): $!";
   while (<CONFIG>) {
     chomp;
-    s!\w*//.*!!;
+    #s!\w*//.*!!;
     next if (m/^#/);
     next if (m/^\s*$/);
     if (m/^([A-Za-z0-9]+)\s*=\s*(.+)$/) {
@@ -3120,6 +3173,13 @@ sub ParseConfigFile {
         } else {
           print STDERR "SleepTime defined in config file ($value) is not a number. Using default ($SleepTime).\n";
         }
+      } elsif ($option eq 'InfluxDBAddress') {
+        $InfluxDBAddress = $value;
+        $InfluxDBAddress =~ s/\/$//;
+      } elsif ($option eq 'InfluxDBUser') {
+        $InfluxDBUser = $value;
+      } elsif ($option eq 'InfluxDBPasswd') {
+        $InfluxDBPasswd = $value;
       } elsif ($option eq 'UseInfluxDB') {
         if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
           if ($value =~ m/^(1|true|yes)$/i) {
@@ -3631,9 +3691,7 @@ sub CRC16 {
 
 sub cleanshutdown {
   logmsg(1, "SHUTDOWN: Shutting down.");
-  foreach my $thread (keys(%threads)) {
-    logmsg(3, "SHUTDOWN: Active thread $thread ".$threads{$thread}->tid() );
-  }
+  logmsg(3, "SHUTDOWN: Active threads: ". join(', ', keys(%threads) ));
 
   $threads{threadstatus}->kill('KILL')->join();	# Get rid of this first so it doesn't report uselessly
   delete $threads{threadstatus};
@@ -3641,6 +3699,11 @@ sub cleanshutdown {
   if ($UseRRDs) {
     $threads{RRDthread}->kill('KILL')->detach();	# This could be in a long sleep so just detach
     delete $threads{RRDthread};
+  }
+
+  if ($UseInfluxDB) {
+    $threads{InfluxDBthread}->kill('KILL')->detach();	# This could be in a long sleep so just detach
+    delete $threads{InfluxDBthread};
   }
 
   foreach my $thread (threads->list()) {
