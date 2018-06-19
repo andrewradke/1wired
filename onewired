@@ -83,7 +83,11 @@ if ($UseRRDs) {
 }
 
 ### Begin deamon setup
-Proc::Daemon::Init if ($RunAsDaemon);
+if ($RunAsDaemon) {
+  Proc::Daemon::Init;
+} else {
+  $|=1;	# Flush STDOUT after every print
+}
 ### End deamon setup
 
 ### Begin setting up logging
@@ -2932,7 +2936,7 @@ sub RecordRRDs {
       RRDs::update ($rrdfile, "$rrdcmd");
       $rrderror=RRDs::error;
       if ($rrderror) {
-        logmsg 1, "ERROR updating RRD file for $name: $rrderror";
+        logmsg 1, "ERROR updating RRD file for $name: $rrderror, data sent: '$rrdcmd'";
       } else {
         $data{$address}{rrdage} = $updatetime;
       }
