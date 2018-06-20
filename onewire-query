@@ -484,7 +484,7 @@ sub check_rrds {
   my $error=RRDs::error;
   return () if $error;
 
-  return ($start, $step, $data);
+  return ($start, $step, $names, $rrddata);
 }
 
 sub MaxInRange {
