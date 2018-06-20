@@ -7,7 +7,7 @@ RuntimeDirectory=onewired
 WorkingDirectory=/var/run/onewired
 ExecStart=/usr/local/sbin/onewired
 Restart=on-failure
-Type=forking
+#Type=forking
 PIDFile=/var/run/onewired/onewired.pid
 User=onewired
 
