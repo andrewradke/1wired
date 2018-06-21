@@ -1260,7 +1260,7 @@ sub monitor_mqttsub {
   LOOP: while (1) {
     logmsg 4, "Connecting by $MasterType to $MQTTSub";
     while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$MQTTSub") ) ) {
-      logmsg 3, "Failed to connect to $MasterType $MQTTSub. Sleeping for 10 seconds before retrying";
+      logmsg 2, "Failed to connect to $MasterType $MQTTSub. Sleeping for 10 seconds before retrying";
       sleep 10;						# Wait for 10 seconds before retrying
     }
 
@@ -1432,7 +1432,8 @@ sub monitor_homiesub {
   my $tid = threads->tid();
   $0 = $HomieSub;
   my $pid;
-  my ($HomieHost, $HomieTopic);
+  my $HomieHost;
+  my $HomieTopic = $HomieSub;
 
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_homiesub thread for $HomieSub.");
@@ -1465,12 +1466,12 @@ sub monitor_homiesub {
   LOOP: while (1) {
     $MastersData{$HomieSub}{Restart} = 0;		# Default to not needing to restart the subscription
     logmsg 4, "Connecting by $MasterType to $HomieSub";
-    my $cmd = "mosquitto_sub -v -t $HomieSub";
+    my $cmd = "mosquitto_sub -v -t $HomieTopic";
     $cmd .= " -h $HomieHost"   if ( (defined($HomieHost))   && ($HomieHost   ne '') );
     $cmd .= " -u $HomieUser"   if ( (defined($HomieUser))   && ($HomieUser   ne '') );
     $cmd .= " -P $HomiePasswd" if ( (defined($HomiePasswd)) && ($HomiePasswd ne '') );
     while (! ($pid = open(RETURNED, "$cmd 2>&1 |") ) ) {
-      logmsg 3, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
+      logmsg 2, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
       sleep 10;						# Wait for 10 seconds before retrying
     }
 
@@ -3039,7 +3040,7 @@ sub monitor_agedata {
   };
 
   my $age;
-  sleep 1;		# give the other threads a second to get started
+  sleep 10;		# give the other threads 10 seconds to get started
   while(1) {
     foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs) {
       $age = (time() - $agedata{$LinkDev});
