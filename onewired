@@ -32,6 +32,8 @@ my %deviceDB : shared;
 my %addresses : shared;
 my %agedata : shared;
 my @threadNames : shared;
+my $influx_lines : shared;
+my $metric = "onewired";
 
 
 ### Begin processing config file
@@ -1627,6 +1629,20 @@ sub monitor_homiesub {
           $data{$address}{node}{$nodeid}{type} = $property;
           $data{$address}{node}{$nodeid}{value} = $value;
 
+          if ($UseInfluxDB) {
+            my $timestamp = time();
+            $name = $data{$address}{name};
+            $type = $data{$address}{type};
+            if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
+              # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $data{$address}{node}{$nodeid}{value})." $timestamp\n";
+            } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1)." $timestamp\n";
+            } else {
+              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$data{$address}{node}{$nodeid}{value} $timestamp\n";
+            }
+          }
+
           my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
 
           if (! defined($data{$address}{node}{$nodeid}{MinuteMax})) {
@@ -2694,8 +2710,6 @@ sub RecordInfluxDB {
 
   my @addresses;
   my ($address, $name, $type, $age);
-  my $influx_lines = "";
-  my $metric = "onewired";
 
   while(1) {
     sleep (60 - (time() % 60));		# update once per minute and give some time for the first data
@@ -2715,7 +2729,7 @@ sub RecordInfluxDB {
         next;
       }
       $age         = time() - $data{$address}{age};
-      if ($age > 60) {
+      if ($age > 60 && $type ne 'homie') {					# homie devices will be storing their data as it's received so the age here would only apply to the signal or latency
         logmsg 1, "ERROR for $name: Age of data ($age) for InfluxDB update is > 60s. Skipping.";
         next;
       }
@@ -2736,22 +2750,22 @@ sub RecordInfluxDB {
       } elsif ($type eq 'rain') {
         $influx_lines .= "$metric,device=$name,sensor=rain value=$data{$address}{rain} $timestamp\n";
       } elsif ($type eq 'homie') {
-        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
-          if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
-            # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
-            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $data{$address}{node}{$nodeid}{value})." $timestamp\n";
-            }
-          } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
-            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1)." $timestamp\n";
-            }
-          } else {
-            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$data{$address}{node}{$nodeid}{value} $timestamp\n";
-            }
-          }
-        }
+#        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
+#          if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
+#            # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
+#            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+#              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $data{$address}{node}{$nodeid}{value})." $timestamp\n";
+#            }
+#          } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+#            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+#              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1)." $timestamp\n";
+#            }
+#          } else {
+#            if ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) {
+#              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$data{$address}{node}{$nodeid}{value} $timestamp\n";
+#            }
+#          }
+#        }
         if ( (defined($data{$address}{signal})) && ($data{$address}{signal} ne '')) {
           $influx_lines .= "$metric,device=$name,sensor=signal value=$data{$address}{signal} $timestamp\n";
         }
@@ -2791,25 +2805,31 @@ sub RecordInfluxDB {
       }
     }
     if ($influx_lines ne "") {
+      my $influx_send_lines = $influx_lines;
+      $influx_lines = '';
 
       my $HTTPreq = HTTP::Request->new(POST => "$InfluxDBAddress/write?db=$metric&precision=s");
       if ( defined($InfluxDBUser) && ($InfluxDBUser ne "") && defined($InfluxDBUser) && ($InfluxDBUser ne "") ) {
         $HTTPreq->authorization_basic($InfluxDBUser, $InfluxDBPasswd)
       }
 
-      $influx_lines =~ s/\n$//;	# Strip the last \n
-      $HTTPreq->content($influx_lines);
+      $influx_send_lines =~ s/\n$//;	# Strip the last \n
+      $HTTPreq->content($influx_send_lines);
 
       logmsg (5, "InfluxDB URL: '$InfluxDBAddress/write?db=$metric'");
-      logmsg (5, "InfluxDB write lines: '$influx_lines'");
+      logmsg (5, "InfluxDB write lines: '$influx_send_lines'");
 
       my $HTTPresponse = $UserAgent->request($HTTPreq);
       if ($HTTPresponse->is_success) {
         logmsg (4, "InfluxDB updated successfully.");
-        $influx_lines = "";
+        #$influx_lines = "";
       } else {
         logmsg (1, "InfluxDB update failed. POST error code: ".$HTTPresponse->code.", response: '".$HTTPresponse->message."'");
-        $influx_lines .= "\n";	# Add a newline back on so the next line starts in the right place
+        if ($HTTPresponse->message eq 'Bad Request') {
+          logmsg (1, "Discarding bad data for InfluxDB: '".$influx_send_lines."'");
+        } else {
+          $influx_lines .= "$influx_send_lines\n";	# Add the data back so it can be tried again next time
+        }
       }
 
     }
