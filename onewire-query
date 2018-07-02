@@ -4,10 +4,11 @@ use strict;
 use IO::Socket::INET;
 use Getopt::Long;
 
-my ($device, $command, $test, $statecheck, $ConfigFile, $timeout, $verbose, $MinuteMax, $help);
+my ($device, $command, $test, $statecheck, $StaleAge, $ConfigFile, $timeout, $verbose, $MinuteMax, $help);
 
 $ConfigFile = '/etc/onewired/onewired.conf';
 $timeout = 10;
+$StaleAge = 30;
 
 Getopt::Long::Configure('bundling');
 GetOptions(
@@ -15,6 +16,7 @@ GetOptions(
 	"C=s"	=> \$command,		"command=s"	=> \$command,
 	"T=s"	=> \$test,		"test=s"	=> \$test,
 	"s"	=> \$statecheck,	"state"		=> \$statecheck,
+	"S=s"	=> \$StaleAge,		"stale=s"	=> \$StaleAge,
 	"m"	=> \$MinuteMax,		"minute"	=> \$MinuteMax,
 	"c=s"	=> \$ConfigFile,	"config=s"	=> \$ConfigFile,
 	"t=s"	=> \$timeout,		"timeout=s"	=> \$timeout,
@@ -35,6 +37,7 @@ if ($help) {
 	-C|--command=<command>		# All other options except -t ignored
 	-T|--test=<TestName>		# Only used with -s|--state
 	-s|--state			# Check state
+	-S|--stale=<seconds>		# Maximimum age of data before it's considered stale (unknown), Default: $StaleAge
 	-m|--minute			# Report 1 minute maximum value
 	-c|--config=<ConfigFile>	# Default: $ConfigFile
 	-t|--timeout=<number>		# Default: $timeout
@@ -258,8 +261,8 @@ if ($name) {
 
   my ($start, $step, $names, $rrddata);		### RRD data
 
-  if ($age > 60) {
-    print "$name data stale (" . age_text($age) . " old)\n";
+  if ($age > $StaleAge) {
+    print "$name data stale (" . age_text($age) . " old > $StaleAge)\n";
     exit 3;
   }
 

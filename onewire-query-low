@@ -4,10 +4,11 @@ use strict;
 use IO::Socket::INET;
 use Getopt::Long;
 
-my ($device, $command, $test, $statecheck, $ConfigFile, $timeout, $verbose, $MinuteMin, $help);
+my ($device, $command, $test, $statecheck, $StaleAge, $ConfigFile, $timeout, $verbose, $MinuteMin, $help);
 
 $ConfigFile = '/etc/onewired/onewired.conf';
 $timeout = 10;
+$StaleAge = 30;
 
 Getopt::Long::Configure('bundling');
 GetOptions(
@@ -15,6 +16,7 @@ GetOptions(
 	"C=s"	=> \$command,		"command=s"	=> \$command,
 	"T=s"	=> \$test,		"test=s"	=> \$test,
 	"s"	=> \$statecheck,	"state"		=> \$statecheck,
+	"S=s"	=> \$StaleAge,		"stale=s"	=> \$StaleAge,
 	"m"	=> \$MinuteMin,		"minute"	=> \$MinuteMin,
 	"c=s"	=> \$ConfigFile,	"config=s"	=> \$ConfigFile,
 	"t=s"	=> \$timeout,		"timeout=s"	=> \$timeout,
@@ -35,6 +37,7 @@ if ($help) {
 	-C|--command=<command>		# All other options except -t ignored
 	-T|--test=<TestName>		# Only used with -s|--state
 	-s|--state			# Check state
+	-S|--stale=<seconds>		# Maximimum age of data before it's considered stale (unknown), Default: $StaleAge
 	-m|--minute			# Report 1 minute minimum value
 	-c|--config=<ConfigFile>	# Default: $ConfigFile
 	-t|--timeout=<number>		# Default: $timeout
@@ -230,8 +233,16 @@ if ($name) {
   ($type)        = $return =~ m/type: ([^\n]*)/;
   ($temperature) = $return =~ m/temperature: ([^\n]*)/;
   ($voltage)     = $return =~ m/$type: ([^\n]*)/;
-  ($minute)      = $return =~ m/1MinuteMin: ([^\n]*)/;
-  ($FiveMinute)  = $return =~ m/5MinuteMin: ([^\n]*)/;
+  if ($return =~ m/1MinuteMin: /) {
+    ($minute)    = $return =~ m/1MinuteMin: ([^\n]*)/;
+  } else {
+    ($minute)    = $return =~ m/$test: ([^\n]*)/;
+  }
+  if ($return =~ m/5MinuteMin: /) {
+    ($FiveMinute)    = $return =~ m/5MinuteMin: ([^\n]*)/;
+  } else {
+    $FiveMinute      = $voltage;
+  }
   ($updated)     = $return =~ m/updated: ([^\n]*)/;
   ($age)         = $return =~ m/age: ([^\n]*)/;
   ($iminute)     = $return =~ m/Current1MinuteMin: ([^\n]*)/;
@@ -240,6 +251,7 @@ if ($name) {
   $minute        = 0 unless ($minute);
   $FiveMinute    = 0 unless ($FiveMinute);
   $iminute       = 0 unless ($iminute);
+
   $temperature   = restrict_num_decimal_digits($temperature,2);
   $voltage       = restrict_num_decimal_digits($voltage,2);
   $minute        = restrict_num_decimal_digits($minute,2);
@@ -247,10 +259,10 @@ if ($name) {
   $data{temperature} = $temperature;
   $data{$type}   = $minute;
 
-  my ($start, $step, $data);		### RRD data
+  my ($start, $step, $names, $rrddata);		### RRD data
 
-  if ($age > 60) {
-    print "$name data stale (" . age_text($age) . " old)\n";
+  if ($age > $StaleAge) {
+    print "$name data stale (" . age_text($age) . " old > $StaleAge)\n";
     exit 3;
   }
 
@@ -264,8 +276,12 @@ if ($name) {
         exit 2;
       }
     }
+    if (! defined($data{$test}) ) {
+      print "No data for '$test' found $device\n";
+      exit 3;
+    }
     if ($data{$test} eq 'NA') {
-      print "No state data found for $device:$test\n";
+      print "No data for $device:$test\n";
       exit 3;
     }
     if ($StateData) {
@@ -287,8 +303,8 @@ if ($name) {
             print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
             exit 0;
           } else {
-            ($start, $step, $data) = check_rrds($name) if (! defined($data));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $data, $range),1);
+            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
             $min = $data{$test} if ($data{$test} < $min);
             if (checkrange($min,$_)) {
               print "$test $range minute(s) minimum: $min;  $normal\n";
@@ -319,8 +335,8 @@ if ($name) {
             print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
             exit 1;
           } else {
-            ($start, $step, $data) = check_rrds($name) if (! defined($data));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $data, $range),1);
+            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
             $min = $data{$test} if ($data{$test} > $min);
             if (checkrange($min,$_)) {
               print "$test $range minute(s) minimum: $min;  $normal\n";
@@ -351,8 +367,8 @@ if ($name) {
             print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
             exit 2;
           } else {
-            ($start, $step, $data) = check_rrds($name) if (! defined($data));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $data, $range),1);
+            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
             $min = $data{$test} if ($data{$test} > $min);
             if (checkrange($min,$_)) {
               print "$range minute(s) minimum $test: $min;  $normal\n";
@@ -466,22 +482,34 @@ sub check_rrds {
 
   return () if (! -r $rrdfile);
 
-  my ($start, $step, $names, $data) =
+  my ($start, $step, $names, $rrddata) =
 	RRDs::fetch($rrdfile, "MIN", "-r", "$resolution", "-s", "$start_time", "-e", "$end_time");
   my $error=RRDs::error;
   return () if $error;
 
-  return ($start, $step, $data);
+  return ($start, $step, $names, $rrddata);
 }
 
 sub MinInRange {
   # ($start, $step, $data, $range);
   my $start = shift;
   my $step = shift;
-  my $data = shift;
+  my $names = shift;
+  my $rrddata = shift;
   my $range = shift;
-  my $ds = 1;
-  $ds = 0 if ( $test eq 'temperature');
+  my $ds;
+
+  my $i = 0;
+  foreach my $dsname (@$names) {
+    if ( $test eq $dsname) {
+      $ds = $i;
+      last;
+    }
+    $i++;
+  }
+  if (! defined($ds)) {
+    print "No data for '$test' found in RRD for $device\n";
+  }
 
   my $row;
   my $min;
@@ -489,7 +517,7 @@ sub MinInRange {
   my $cur_time = time();
   my $start_time = $cur_time - ($range * 60);
 
-  foreach $row (@$data) {
+  foreach $row (@$rrddata) {
     $timestamp += $step;
     next if ($timestamp < $start_time);
     last if ($timestamp > $cur_time);
