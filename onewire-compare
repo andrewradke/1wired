@@ -3,11 +3,13 @@
 use strict;
 use Getopt::Long;
 
-my ($device1, $device2, $test1, $test2, $test, $range, $warn, $critical, $percent, $verbose, $help);
+my ($device1, $device2, $test1, $test2, $test, $range, $warn, $critical, $percent, $StaleAge, $verbose, $help);
 my ($warntext, $criticaltext);
 my $status;
 my ($difference, $absdifference);
 my ($device1data, $device2data);
+
+$StaleAge = 30;
 
 Getopt::Long::Configure('bundling');
 GetOptions(
@@ -20,6 +22,7 @@ GetOptions(
 	"w=s"	=> \$warn,	"warn=s"	=> \$warn,
 	"c=s"	=> \$critical,	"critical=s"	=> \$critical,
 	"p"	=> \$percent,	"percent"	=> \$percent,
+	"S=s"	=> \$StaleAge,	"stale=s"	=> \$StaleAge,
 	"v"	=> \$verbose,	"verbose"	=> \$verbose,
 	"h"	=> \$help,	"help"		=> \$help,
 	);
@@ -54,11 +57,11 @@ if ($help) {
 }
 
 if ($test) {
-  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test"`;
-  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test"`;
+  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test" --stale=$StaleAge`;
+  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test" --stale=$StaleAge`;
 } else {
-  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test1"`;
-  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test2"`;
+  $device1data=`/usr/local/bin/onewire-query --device="$device1" --test="$test1" --stale=$StaleAge`;
+  $device2data=`/usr/local/bin/onewire-query --device="$device2" --test="$test2" --stale=$StaleAge`;
 }
 chomp($device1data);
 chomp($device2data);
