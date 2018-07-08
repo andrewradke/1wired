@@ -345,6 +345,13 @@ sub monitor_linkhub {
     threads->exit();
   };
 
+  local $SIG{ALRM} = sub {
+    logmsg(3, "Disconnecting from $LinkDev due to timeout.");
+    #Reset();
+    #$returned = LinkData("\n");		# Discard returned reset data
+    $socket->close if (defined($socket));;
+  };
+
   logmsg 1, "Monitoring LinkHub $LinkDev";
   our $MasterType = 'LinkHubE';
   if ($LinkDev =~ m/^\/dev\//) {
@@ -364,6 +371,7 @@ sub monitor_linkhub {
   $MastersData{$LinkDev}{DataError} = 0;
 
   while(1) {
+    alarm 5;
     if ( $MastersData{$LinkDev}{DataError} >= 5 ) {
       logmsg 1, "ERROR on $LinkDev: $MastersData{$LinkDev}{DataError} concurrent data errors, trying LinkHub reset.";
       $returned = LinkData('\!');		# Reset LinkHub (1-wire device not ethernet device)
@@ -385,6 +393,7 @@ sub monitor_linkhub {
 
     $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
     if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
+      alarm 15;
       sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
@@ -1037,28 +1046,33 @@ sub monitor_linkth {
   my $LinkDev = shift;
   my $tid = threads->tid();
   $0 = $LinkDev;
+  our $MasterType = 'LinkSerial';
+  my @addresses;
+  my $returned;
+  my $socket;
+  my ($temperature, $voltage);
+  my $address;
+  my ($type, $name);
+
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_linkth thread for $LinkDev.");
     threads->exit();
   };
 
+  local $SIG{ALRM} = sub {
+    logmsg(3, "Disconnecting from $LinkDev due to timeout.");
+    $socket->close if (defined($socket));;
+  };
+
   logmsg 1, "Monitoring LinkTH $LinkDev";
-  our $MasterType = 'LinkSerial';
-
-  my @addresses;
-
-  my $returned;
-  my $socket;
-
-  my ($temperature, $voltage);
-  my $address;
-  my ($type, $name);
 
   while (1) {
+    alarm 5;
     sleep 1;
     $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
     if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
       logmsg 3, "Failed to connect to $LinkDev. Sleeping for 10 seconds before retrying";
+      alarm 15;
       sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
@@ -1233,6 +1247,13 @@ sub monitor_mqttsub {
   my $tid = threads->tid();
   $0 = $MQTTSub;
   my $pid;
+  our $MasterType = 'MQTT';
+  $MastersData{$MQTTSub}{channels} = 1;		# MQTT always supports channel reporting
+  my %localaddresses;
+  my $returned;
+  my ($temperature, $voltage, $timestamp);
+  my $address;
+  my ($type, $name);
 
   $SIG{'KILL'} = sub {
     logmsg(3, "Stopping monitor_mqttsub thread for $MQTTSub.");
@@ -1241,25 +1262,21 @@ sub monitor_mqttsub {
     threads->exit();
   };
 
+  local $SIG{ALRM} = sub {
+    logmsg(3, "Disconnecting from $MQTTSub due to timeout.");
+    kill('KILL', $pid);
+    close(RETURNED);
+  };
+
   my $channel;
   if (! ($MQTTSub =~ m/^([^\/]+)\/(.+)$/) ) {
     logmsg(1, "MQTT topic defined in config file ($MQTTSub) is not valid (.*/.*). Exiting.");
     threads->exit();
   }
   logmsg 1, "Monitoring MQTT $MQTTSub";
-  our $MasterType = 'MQTT';
-
-  $MastersData{$MQTTSub}{channels} = 1;		# MQTT always supports channel reporting
-
-  my %localaddresses;
-
-  my $returned;
-
-  my ($temperature, $voltage, $timestamp);
-  my $address;
-  my ($type, $name);
 
   LOOP: while (1) {
+    alarm 5;
     logmsg 4, "Connecting by $MasterType to $MQTTSub";
     while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$MQTTSub") ) ) {
       logmsg 2, "Failed to connect to $MasterType $MQTTSub. Sleeping for 10 seconds before retrying";
@@ -1444,6 +1461,12 @@ sub monitor_homiesub {
     threads->exit();
   };
 
+  local $SIG{ALRM} = sub {
+    logmsg(3, "Disconnecting from $HomieSub due to timeout.");
+    kill('KILL', $pid);
+    close(RETURNED);
+  };
+
   if (! ($HomieSub =~ m/^([^:]+:|)([^\/]+\/.+)$/) ) {
     logmsg(1, "MQTT broker and/or Homie topic defined in config file ($HomieSub) is not valid (.*/.*). Exiting.");
     threads->exit();
@@ -1466,6 +1489,7 @@ sub monitor_homiesub {
   my ($type, $name);
 
   LOOP: while (1) {
+    alarm 5;
     $MastersData{$HomieSub}{Restart} = 0;		# Default to not needing to restart the subscription
     logmsg 4, "Connecting by $MasterType to $HomieSub";
     my $cmd = "mosquitto_sub -v -t $HomieTopic";
@@ -3072,7 +3096,7 @@ sub monitor_agedata {
       logmsg (4,"Age data for $LinkDev: $age seconds");
       if ($age > 60) {
         logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale. Restarting thread.");
-        $threads{$LinkDev}->kill('HUP');
+        $threads{$LinkDev}->kill('KILL');
         $agedata{$LinkDev} = time();
       }
     }
@@ -3387,6 +3411,7 @@ sub LinkData {
         logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection and sleeping for 10 seconds.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
+        alarm 15;
         sleep 10;
       }
     }
