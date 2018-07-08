@@ -1631,15 +1631,20 @@ sub monitor_homiesub {
 
           if ($UseInfluxDB) {
             my $timestamp = time();
-            $name = $data{$address}{name};
-            $type = $data{$address}{type};
-            if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
-              # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $data{$address}{node}{$nodeid}{value})." $timestamp\n";
-            } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($data{$address}{node}{$nodeid}{value} eq 'open') ? 0 : 1)." $timestamp\n";
+            $name  = $data{$address}{name};
+            $type  = $data{$address}{type};
+            $value = $data{$address}{node}{$nodeid}{value};
+            if ($value ne 'nan') {
+              if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
+                # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $value)." $timestamp\n";
+              } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($value eq 'open') ? 0 : 1)." $timestamp\n";
+              } else {
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$value $timestamp\n";
+              }
             } else {
-              $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$data{$address}{node}{$nodeid}{value} $timestamp\n";
+              logmsg 4, "INFO on $HomieSub:$data{$address}{name}: ignoring a empty value when updating InfluxDB.";
             }
           }
 
@@ -2745,9 +2750,9 @@ sub RecordInfluxDB {
       $type        =~ s/^depth[0-9.]+$/depth/;
       $type        = 'temperature' if ( ($type eq 'ds18b20') || ($type eq 'ds1820') );
 
-      if ($type eq 'temperature') {
+      if ( ($type eq 'temperature') && ($data{$address}{temperature} ne 'NA') ) {
         $influx_lines .= "$metric,device=$name,sensor=temperature value=$data{$address}{temperature} $timestamp\n";
-      } elsif ($type eq 'rain') {
+      } elsif ( ($type eq 'rain')  && ($data{$address}{rain} ne 'NA') ) {
         $influx_lines .= "$metric,device=$name,sensor=rain value=$data{$address}{rain} $timestamp\n";
       } elsif ($type eq 'homie') {
 #        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
