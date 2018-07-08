@@ -211,6 +211,8 @@ $SIG{'INT'}  = \&cleanshutdown;
 $SIG{'QUIT'} = \&cleanshutdown;
 $SIG{'TERM'} = \&cleanshutdown;
 
+$SIG{'ALRM'} = 'IGNORE';	# We wouldn't know where to send it since in Perl alarms are global and then need to be forwarded to threads
+
 
 ### Beginning of listener
 my $server_sock;
@@ -345,7 +347,7 @@ sub monitor_linkhub {
     threads->exit();
   };
 
-  local $SIG{ALRM} = sub {
+  local $SIG{'ALRM'} = sub {
     logmsg(3, "Disconnecting from $LinkDev due to timeout.");
     #Reset();
     #$returned = LinkData("\n");		# Discard returned reset data
@@ -371,7 +373,6 @@ sub monitor_linkhub {
   $MastersData{$LinkDev}{DataError} = 0;
 
   while(1) {
-    alarm 5;
     if ( $MastersData{$LinkDev}{DataError} >= 5 ) {
       logmsg 1, "ERROR on $LinkDev: $MastersData{$LinkDev}{DataError} concurrent data errors, trying LinkHub reset.";
       $returned = LinkData('\!');		# Reset LinkHub (1-wire device not ethernet device)
@@ -393,7 +394,6 @@ sub monitor_linkhub {
 
     $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
     if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
-      alarm 15;
       sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
@@ -1059,7 +1059,7 @@ sub monitor_linkth {
     threads->exit();
   };
 
-  local $SIG{ALRM} = sub {
+  local $SIG{'ALRM'} = sub {
     logmsg(3, "Disconnecting from $LinkDev due to timeout.");
     $socket->close if (defined($socket));;
   };
@@ -1067,12 +1067,10 @@ sub monitor_linkth {
   logmsg 1, "Monitoring LinkTH $LinkDev";
 
   while (1) {
-    alarm 5;
     sleep 1;
     $socket = LinkConnect($LinkDev) if ( (! defined($socket)) or (! $socket) );
     if ( (! defined($socket)) or (! $socket) ) {	# Failed to connect
       logmsg 3, "Failed to connect to $LinkDev. Sleeping for 10 seconds before retrying";
-      alarm 15;
       sleep 10;						# Wait for 10 seconds before retrying
       next;
     }
@@ -1262,7 +1260,7 @@ sub monitor_mqttsub {
     threads->exit();
   };
 
-  local $SIG{ALRM} = sub {
+  local $SIG{'ALRM'} = sub {
     logmsg(3, "Disconnecting from $MQTTSub due to timeout.");
     kill('KILL', $pid);
     close(RETURNED);
@@ -1276,7 +1274,6 @@ sub monitor_mqttsub {
   logmsg 1, "Monitoring MQTT $MQTTSub";
 
   LOOP: while (1) {
-    alarm 5;
     logmsg 4, "Connecting by $MasterType to $MQTTSub";
     while (! ($pid = open(RETURNED, "-|", "mosquitto_sub", "-v", "-t", "$MQTTSub") ) ) {
       logmsg 2, "Failed to connect to $MasterType $MQTTSub. Sleeping for 10 seconds before retrying";
@@ -1461,7 +1458,7 @@ sub monitor_homiesub {
     threads->exit();
   };
 
-  local $SIG{ALRM} = sub {
+  local $SIG{'ALRM'} = sub {
     logmsg(3, "Disconnecting from $HomieSub due to timeout.");
     kill('KILL', $pid);
     close(RETURNED);
@@ -1489,7 +1486,6 @@ sub monitor_homiesub {
   my ($type, $name);
 
   LOOP: while (1) {
-    alarm 5;
     $MastersData{$HomieSub}{Restart} = 0;		# Default to not needing to restart the subscription
     logmsg 4, "Connecting by $MasterType to $HomieSub";
     my $cmd = "mosquitto_sub -v -t $HomieTopic";
@@ -3096,7 +3092,7 @@ sub monitor_agedata {
       logmsg (4,"Age data for $LinkDev: $age seconds");
       if ($age > 60) {
         logmsg (1,"Age data (${age}s) for $LinkDev indicates it is stale. Restarting thread.");
-        $threads{$LinkDev}->kill('KILL');
+        $threads{$LinkDev}->kill('ALRM');
         $agedata{$LinkDev} = time();
       }
     }
@@ -3411,7 +3407,6 @@ sub LinkData {
         logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection and sleeping for 10 seconds.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
-        alarm 15;
         sleep 10;
       }
     }
