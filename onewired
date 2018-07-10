@@ -348,7 +348,7 @@ sub monitor_linkhub {
   };
 
   local $SIG{'ALRM'} = sub {
-    logmsg(3, "Disconnecting from $LinkDev due to timeout.");
+    logmsg(1, "Disconnecting from $LinkDev due to timeout.");
     #Reset();
     #$returned = LinkData("\n");		# Discard returned reset data
     $socket->close if (defined($socket));;
@@ -1060,7 +1060,7 @@ sub monitor_linkth {
   };
 
   local $SIG{'ALRM'} = sub {
-    logmsg(3, "Disconnecting from $LinkDev due to timeout.");
+    logmsg(1, "Disconnecting from $LinkDev due to timeout.");
     $socket->close if (defined($socket));;
   };
 
@@ -1261,7 +1261,7 @@ sub monitor_mqttsub {
   };
 
   local $SIG{'ALRM'} = sub {
-    logmsg(3, "Disconnecting from $MQTTSub due to timeout.");
+    logmsg(1, "Disconnecting from $MQTTSub due to timeout.");
     kill('KILL', $pid);
     close(RETURNED);
   };
@@ -1459,7 +1459,7 @@ sub monitor_homiesub {
   };
 
   local $SIG{'ALRM'} = sub {
-    logmsg(3, "Disconnecting from $HomieSub due to timeout.");
+    logmsg(1, "Disconnecting from $HomieSub due to timeout.");
     kill('KILL', $pid);
     close(RETURNED);
   };
@@ -3393,18 +3393,23 @@ sub LinkData {
   logmsg 6, "--> '$send'";
   my $returned = '';
   my $tmp;
+  my $success = 0;
   if ($main::MasterType eq 'LinkHubE') {
     if (defined($main::socket)) {
-      $main::socket->send($send);
-      sleep $SleepTime;
-      if ($main::select->can_read(1)) {			# 1 second timeout waiting for any data
-        while ($main::select->can_read(0.100)) {	# 100ms timeout waiting for extra data
-          $main::socket->recv($tmp,128);
-          $returned .= $tmp;
-          last if ($returned =~ m/.[\r\n\0]/);
+      if ($main::select->can_write(1)) {		# Is the socket writable
+        $main::socket->send($send);
+        sleep $SleepTime;
+        if ($main::select->can_read(1)) {		# 1 second timeout waiting for any data
+          while ($main::select->can_read(0.100)) {	# 100ms timeout waiting for extra data
+            $main::socket->recv($tmp,128);
+            $returned .= $tmp;
+            $success = 1;				# We've successfully written to and read from the socket (even if it's not the data we are looking for)
+            last if ($returned =~ m/.[\r\n\0]/);
+          }
         }
-      } else {
-        logmsg 1, "ERROR on $main::LinkDev: Couldn't read data. Closing connection and sleeping for 10 seconds.";
+      }
+      if (! $success) {
+        logmsg 1, "ERROR on $main::LinkDev: Couldn't read or write data. Closing connection and sleeping for 10 seconds.";
         close ($main::socket) if (defined($main::socket));
         $main::socket = undef;
         sleep 10;
@@ -3760,7 +3765,7 @@ sub cleanshutdown {
   while (keys(%threads)) {
     foreach my $thread (keys(%threads)) {
       if ($threads{$thread}->is_running() ) {
-        logmsg(1, "SHUTDOWN: thread $thread ".$threads{$thread}->tid()." still running");
+        logmsg(1, "SHUTDOWN: thread $thread still running");
       } else {
         logmsg(1, "SHUTDOWN: thread $thread finished.");
         $threads{$thread}->join();
