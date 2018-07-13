@@ -1536,6 +1536,11 @@ sub monitor_homiesub {
         $address = $2;
         my $key = $3;
         logmsg 6, "topic: $1, address: $2, key: $3, value: $value";
+        if ( ($key =~ m!/set$!) ) {
+          chomp($returned);
+          logmsg 4, "INFO on $HomieSub: ignoring set command for $address: '$returned'";
+          next;
+        }
 
         if (! defined($data{$address})) {
           $data{$address} = &share( {} );
