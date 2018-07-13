@@ -3397,16 +3397,18 @@ sub LinkData {
   if ($main::MasterType eq 'LinkHubE') {
     if (defined($main::socket)) {
       if ($main::select->can_write(1)) {		# Is the socket writable
-        $main::socket->send($send);
-        sleep $SleepTime;
-        if ($main::select->can_read(1)) {		# 1 second timeout waiting for any data
-          while ($main::select->can_read(0.100)) {	# 100ms timeout waiting for extra data
-            $main::socket->recv($tmp,128);
-            $returned .= $tmp;
-            $success = 1;				# We've successfully written to and read from the socket (even if it's not the data we are looking for)
-            last if ($returned =~ m/.[\r\n\0]/);
+        eval {
+          $main::socket->send($send);
+          sleep $SleepTime;
+          if ($main::select->can_read(1)) {		# 1 second timeout waiting for any data
+            while ($main::select->can_read(0.100)) {	# 100ms timeout waiting for extra data
+              $main::socket->recv($tmp,128);
+              $returned .= $tmp;
+              $success = 1;				# We've successfully written to and read from the socket (even if it's not the data we are looking for)
+              last if ($returned =~ m/.[\r\n\0]/);
+            }
           }
-        }
+        };
       }
       if (! $success) {
         logmsg 1, "ERROR on $main::LinkDev: Couldn't read or write data. Closing connection and sleeping for 10 seconds.";
