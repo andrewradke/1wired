@@ -1660,6 +1660,7 @@ sub monitor_homiesub {
             $type  = $data{$address}{type};
             $value = $data{$address}{node}{$nodeid}{value};
             if ($value ne 'nan') {
+              $value =~ s/ //g;
               if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
                 # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
                 $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $value)." $timestamp\n";
