@@ -1640,6 +1640,8 @@ sub monitor_homiesub {
         } else {
 
           my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
+          $value = 1 if ($value =~ m/^(true|yes)$/i);
+          $value = 0 if ($value =~ m/^(false|no)$/i);
 
           if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
             $nodeid = 'depth';
