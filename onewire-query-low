@@ -246,16 +246,16 @@ if ($name) {
   ($updated)     = $return =~ m/updated: ([^\n]*)/;
   ($age)         = $return =~ m/age: ([^\n]*)/;
   ($iminute)     = $return =~ m/Current1MinuteMin: ([^\n]*)/;
-  $temperature   = 0 unless ($temperature);
-  $voltage       = 0 unless ($voltage);
-  $minute        = 0 unless ($minute);
-  $FiveMinute    = 0 unless ($FiveMinute);
-  $iminute       = 0 unless ($iminute);
+  #$temperature   = 0 unless ($temperature);
+  #$voltage       = 0 unless ($voltage);
+  #$minute        = 0 unless ($minute);
+  #$FiveMinute    = 0 unless ($FiveMinute);
+  #$iminute       = 0 unless ($iminute);
 
-  $temperature   = restrict_num_decimal_digits($temperature,2);
-  $voltage       = restrict_num_decimal_digits($voltage,2);
-  $minute        = restrict_num_decimal_digits($minute,2);
-  $FiveMinute    = restrict_num_decimal_digits($FiveMinute,2);
+  #$temperature   = restrict_num_decimal_digits($temperature,2);
+  #$voltage       = restrict_num_decimal_digits($voltage,2);
+  #$minute        = restrict_num_decimal_digits($minute,2);
+  #$FiveMinute    = restrict_num_decimal_digits($FiveMinute,2);
   $data{temperature} = $temperature;
   $data{$type}   = $minute;
 
@@ -285,7 +285,11 @@ if ($name) {
       exit 3;
     }
     if ($StateData) {
-      $normal = "(NORMAL: $StateGood)";
+      print "Good state:    '$StateGood'\n" if ($verbose);
+      print "Warning state: '$StateWarning'\n" if ($verbose);
+      print "Error state:   '$StateError'\n" if ($verbose);
+      $normal = "(ok: $StateGood)";
+      print "\nChecking for GOOD state\n" if ($verbose);
       foreach (split(/,/, $StateGood)) {
         if (s/^(\d+)min//i) {
           if (! $UseRRDs) {
@@ -296,28 +300,38 @@ if ($name) {
 # Don't bother with the RRDs if
 #	the check is for < x and current value is < x
 #	or the check is for < x and the range is >= 5 min and the 5 min min is < x
-          if ((m/^<(.*)/) && (checkrange($data{$test},$_))) {
-            print "current $test is $data{$test};  $normal\n";
-            exit 0;
-          } elsif (($range >= 5) && (m/^<(.*)/) && (checkrange($FiveMinute,$_))) {
-            print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
-            exit 0;
-          } else {
-            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
-            $min = $data{$test} if ($data{$test} < $min);
-            if (checkrange($min,$_)) {
-              print "$test $range minute(s) minimum: $min;  $normal\n";
+          print "  Checking if in '$_' in '${range}min'\n" if ($verbose);
+          if (m/^[><](.*)/) {
+            print "    Checking current data " if ($verbose);
+            if (checkrange($data{$test},$_)) {
+              print "$test currently is $data{$test};  $normal\n";
               exit 0;
             }
           }
+          if ( ($range >= 5) && (m/^[><](.*)/) && defined($FiveMinute) ) {
+            print "    Checking FiveMinute minimum " if ($verbose);
+            if (checkrange($FiveMinute,$_)) {
+              print "$test 5 minute minimum is $FiveMinute;  $normal\n";
+              exit 0;
+            }
+          }
+          ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+          $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
+          $min = $data{$test} if ($data{$test} < $min);
+          print "    Checking RRD minimum " if ($verbose);
+          if (checkrange($min,$_)) {
+            print "$test $range minute(s) minimum is $min;  $normal\n";
+            exit 0;
+          }
         } else {
+          print "  Checking current data " if ($verbose);
           if (checkrange($data{$test},$_)) {
             print "$test is $data{$test} ($StateGood)\n";
             exit 0;
           }
         }
       }
+      print "\nChecking for WARNING state\n" if ($verbose);
       foreach (split(/,/, $StateWarning)) {
         if (s/^(\d+)min//i) {
           if (! $UseRRDs) {
@@ -325,31 +339,24 @@ if ($name) {
             exit 3;
           }
           $range = $1;
-# Don't bother with the RRDs if
-#	the check is for < x and current value is < x
-#	or the check is for < x and the range is >= 5 min and the 5 min min is < x
-          if ((m/^<(.*)/) && (checkrange($data{$test},$_))) {
-            print "current $test is $data{$test};  $normal\n";
+          print "  Checking if in '$_' in '${range}min'\n" if ($verbose);
+          ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+          $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
+          $min = $data{$test} if ($data{$test} < $min);
+          print "    Checking RRD minimum " if ($verbose);
+          if (checkrange($min,$_)) {
+            print "$test $range minute(s) minimum: $min;  $normal\n";
             exit 1;
-          } elsif (($range >= 5) && (m/^<(.*)/) && (checkrange($FiveMinute,$_))) {
-            print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
-            exit 1;
-          } else {
-            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
-            $min = $data{$test} if ($data{$test} > $min);
-            if (checkrange($min,$_)) {
-              print "$test $range minute(s) minimum: $min;  $normal\n";
-              exit 1;
-            }
           }
         } else {
+          print "  Checking current data " if ($verbose);
           if (checkrange($data{$test},$_)) {
             print "$test is $data{$test};  $normal\n";
             exit 1;
           }
         }
       }
+      print "\nChecking for ERROR state\n" if ($verbose);
       foreach (split(/,/, $StateError)) {
         if (s/^(\d+)min//i) {
           if (! $UseRRDs) {
@@ -357,31 +364,24 @@ if ($name) {
             exit 3;
           }
           $range = $1;
-# Don't bother with the RRDs if
-#	the check is for < x and current value is < x
-#	or the check is for < x and the range is >= 5 min and the 5 min min is < x
-          if ((m/^>(.*)/) && (checkrange($data{$test},$_))) {
-            print "current $test is $data{$test};  $normal\n";
+          print "  Checking if in '$_' in '${range}min'\n" if ($verbose);
+          ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
+          $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
+          $min = $data{$test} if ($data{$test} < $min);
+          print "    Checking RRD minimum " if ($verbose);
+          if (checkrange($min,$_)) {
+            print "$range minute(s) minimum $test: $min;  $normal\n";
             exit 2;
-          } elsif (($range >= 5) && (m/^<(.*)/) && (checkrange($FiveMinute,$_))) {
-            print "$range minute(s) minimum $test: $FiveMinute;  $normal\n";
-            exit 2;
-          } else {
-            ($start, $step, $names, $rrddata) = check_rrds($name) if (! defined($rrddata));
-            $min = restrict_num_decimal_digits(MinInRange($start, $step, $names, $rrddata, $range),1);
-            $min = $data{$test} if ($data{$test} > $min);
-            if (checkrange($min,$_)) {
-              print "$range minute(s) minimum $test: $min;  $normal\n";
-              exit 2;
-            }
           }
         } else {
+          print "  Checking current data " if ($verbose);
           if (checkrange($data{$test},$_)) {
             print "$test is $data{$test};  $normal\n";
             exit 2;
           }
         }
       }
+      print "\nNO checks were within ANY defined ranges\n" if ($verbose);
       print "Value ($data{$test}) not within any ranges specified ($StateData).\n";
       exit 2;
     } else {
@@ -421,37 +421,49 @@ sub checkrange {
   # ARG2 = test range
   my $value = shift;
   $_ = shift;
+  print "'$value' in '$_': " if ($verbose);
   if (m/^([^><]+?)-(.*)$/) {
     if ($value >= $1 && $value <= $2) {
+      print "yes\n" if ($verbose);
       return 1;
     } else {
+      print "no\n" if ($verbose);
       return 0;
     }
   } elsif (m/^<=(.*)$/) {
     if ($value <= $1) {
+      print "yes\n" if ($verbose);
       return 1;
     } else {
+      print "no\n" if ($verbose);
       return 0;
     }
   } elsif (m/^<(.*)$/) {
     if ($value < $1) {
+      print "yes\n" if ($verbose);
       return 1;
     } else {
+      print "no\n" if ($verbose);
       return 0;
     }
   } elsif (m/^>=(.*)$/) {
     if ($value >= $1) {
+      print "yes\n" if ($verbose);
       return 1;
     } else {
+      print "no\n" if ($verbose);
       return 0;
     }
   } elsif (m/^>(.*)$/) {
     if ($value > $1) {
+      print "yes\n" if ($verbose);
       return 1;
     } else {
+      print "no\n" if ($verbose);
       return 0;
     }
   } elsif ($value = $1) {
+    print "yes\n" if ($verbose);
     return 1;
   } else {
     print "Couldn't evaluate $_";
