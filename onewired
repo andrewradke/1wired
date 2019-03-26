@@ -1678,49 +1678,51 @@ sub monitor_homiesub {
 
           my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
 
-          if (! defined($data{$address}{node}{$nodeid}{MinuteMax})) {
-            $data{$address}{node}{$nodeid}{MinuteMax}		= $value;
-            $data{$address}{node}{$nodeid}{TimeMax}		= time();
-          } else {
-            if ( $data{$address}{node}{$nodeid}{TimeMax} < $thisminute ) {
-              $data{$address}{node}{$nodeid}{FiveMinuteMax}	= $data{$address}{node}{$nodeid}{FourMinuteMax};
-              $data{$address}{node}{$nodeid}{FiveTimeMax}	= $data{$address}{node}{$nodeid}{FourTimeMax};
-              $data{$address}{node}{$nodeid}{FourMinuteMax}	= $data{$address}{node}{$nodeid}{ThreeMinuteMax};
-              $data{$address}{node}{$nodeid}{FourTimeMax}	= $data{$address}{node}{$nodeid}{ThreeTimeMax};
-              $data{$address}{node}{$nodeid}{ThreeMinuteMax}	= $data{$address}{node}{$nodeid}{TwoMinuteMax};
-              $data{$address}{node}{$nodeid}{ThreeTimeMax}	= $data{$address}{node}{$nodeid}{TwoTimeMax};
-              $data{$address}{node}{$nodeid}{TwoMinuteMax}	= $data{$address}{node}{$nodeid}{OneMinuteMax};
-              $data{$address}{node}{$nodeid}{TwoTimeMax}	= $data{$address}{node}{$nodeid}{OneTimeMax};
-              $data{$address}{node}{$nodeid}{OneMinuteMax}	= $data{$address}{node}{$nodeid}{MinuteMax};
-              $data{$address}{node}{$nodeid}{OneTimeMax}	= $data{$address}{node}{$nodeid}{TimeMax};
-              $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+          if ($data{$address}{node}{$nodeid}{type} ne 'switch') {
+            if (! defined($data{$address}{node}{$nodeid}{MinuteMax})) {
+              $data{$address}{node}{$nodeid}{MinuteMax}		= $value;
               $data{$address}{node}{$nodeid}{TimeMax}		= time();
-            } elsif ($value > $data{$address}{node}{$nodeid}{MinuteMax}) {
-              $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
-              $data{$address}{node}{$nodeid}{TimeMax}		= time();
+            } else {
+              if ( $data{$address}{node}{$nodeid}{TimeMax} < $thisminute ) {
+                $data{$address}{node}{$nodeid}{FiveMinuteMax}	= $data{$address}{node}{$nodeid}{FourMinuteMax};
+                $data{$address}{node}{$nodeid}{FiveTimeMax}	= $data{$address}{node}{$nodeid}{FourTimeMax};
+                $data{$address}{node}{$nodeid}{FourMinuteMax}	= $data{$address}{node}{$nodeid}{ThreeMinuteMax};
+                $data{$address}{node}{$nodeid}{FourTimeMax}	= $data{$address}{node}{$nodeid}{ThreeTimeMax};
+                $data{$address}{node}{$nodeid}{ThreeMinuteMax}	= $data{$address}{node}{$nodeid}{TwoMinuteMax};
+                $data{$address}{node}{$nodeid}{ThreeTimeMax}	= $data{$address}{node}{$nodeid}{TwoTimeMax};
+                $data{$address}{node}{$nodeid}{TwoMinuteMax}	= $data{$address}{node}{$nodeid}{OneMinuteMax};
+                $data{$address}{node}{$nodeid}{TwoTimeMax}	= $data{$address}{node}{$nodeid}{OneTimeMax};
+                $data{$address}{node}{$nodeid}{OneMinuteMax}	= $data{$address}{node}{$nodeid}{MinuteMax};
+                $data{$address}{node}{$nodeid}{OneTimeMax}	= $data{$address}{node}{$nodeid}{TimeMax};
+                $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMax}		= time();
+              } elsif ($value > $data{$address}{node}{$nodeid}{MinuteMax}) {
+                $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMax}		= time();
+              }
             }
-          }
 
-          if (! defined($data{$address}{node}{$nodeid}{MinuteMin})) {
-            $data{$address}{node}{$nodeid}{MinuteMin}		= $value;
-            $data{$address}{node}{$nodeid}{TimeMin}		= time();
-          } else {
-            if ( $data{$address}{node}{$nodeid}{TimeMin} < $thisminute ) {
-              $data{$address}{node}{$nodeid}{FiveMinuteMin}	= $data{$address}{node}{$nodeid}{FourMinuteMin};
-              $data{$address}{node}{$nodeid}{FiveTimeMin}	= $data{$address}{node}{$nodeid}{FourTimeMin};
-              $data{$address}{node}{$nodeid}{FourMinuteMin}	= $data{$address}{node}{$nodeid}{ThreeMinuteMin};
-              $data{$address}{node}{$nodeid}{FourTimeMin}	= $data{$address}{node}{$nodeid}{ThreeTimeMin};
-              $data{$address}{node}{$nodeid}{ThreeMinuteMin}	= $data{$address}{node}{$nodeid}{TwoMinuteMin};
-              $data{$address}{node}{$nodeid}{ThreeTimeMin}	= $data{$address}{node}{$nodeid}{TwoTimeMin};
-              $data{$address}{node}{$nodeid}{TwoMinuteMin}	= $data{$address}{node}{$nodeid}{OneMinuteMin};
-              $data{$address}{node}{$nodeid}{TwoTimeMin}	= $data{$address}{node}{$nodeid}{OneTimeMin};
-              $data{$address}{node}{$nodeid}{OneMinuteMin}	= $data{$address}{node}{$nodeid}{MinuteMin};
-              $data{$address}{node}{$nodeid}{OneTimeMin}	= $data{$address}{node}{$nodeid}{TimeMin};
-              $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+            if (! defined($data{$address}{node}{$nodeid}{MinuteMin})) {
+              $data{$address}{node}{$nodeid}{MinuteMin}		= $value;
               $data{$address}{node}{$nodeid}{TimeMin}		= time();
-            } elsif ($value < $data{$address}{node}{$nodeid}{MinuteMin}) {
-              $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
-              $data{$address}{node}{$nodeid}{TimeMin}		= time();
+            } else {
+              if ( $data{$address}{node}{$nodeid}{TimeMin} < $thisminute ) {
+                $data{$address}{node}{$nodeid}{FiveMinuteMin}	= $data{$address}{node}{$nodeid}{FourMinuteMin};
+                $data{$address}{node}{$nodeid}{FiveTimeMin}	= $data{$address}{node}{$nodeid}{FourTimeMin};
+                $data{$address}{node}{$nodeid}{FourMinuteMin}	= $data{$address}{node}{$nodeid}{ThreeMinuteMin};
+                $data{$address}{node}{$nodeid}{FourTimeMin}	= $data{$address}{node}{$nodeid}{ThreeTimeMin};
+                $data{$address}{node}{$nodeid}{ThreeMinuteMin}	= $data{$address}{node}{$nodeid}{TwoMinuteMin};
+                $data{$address}{node}{$nodeid}{ThreeTimeMin}	= $data{$address}{node}{$nodeid}{TwoTimeMin};
+                $data{$address}{node}{$nodeid}{TwoMinuteMin}	= $data{$address}{node}{$nodeid}{OneMinuteMin};
+                $data{$address}{node}{$nodeid}{TwoTimeMin}	= $data{$address}{node}{$nodeid}{OneTimeMin};
+                $data{$address}{node}{$nodeid}{OneMinuteMin}	= $data{$address}{node}{$nodeid}{MinuteMin};
+                $data{$address}{node}{$nodeid}{OneTimeMin}	= $data{$address}{node}{$nodeid}{TimeMin};
+                $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMin}		= time();
+              } elsif ($value < $data{$address}{node}{$nodeid}{MinuteMin}) {
+                $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMin}		= time();
+              }
             }
           }
 
@@ -2436,6 +2438,8 @@ sub value_all {
               $OutputData{$name} .= "   NA";
             } elsif ($nodeid eq 'counter' ) {
               $OutputData{$name} .= sprintf "%5i", $data{$address}{node}{$nodeid}{value};
+            } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+              $OutputData{$name} .= $data{$address}{node}{$nodeid}{value};
             } else {
               $OutputData{$name} .= sprintf "%5.1f", $data{$address}{node}{$nodeid}{value};
             }
