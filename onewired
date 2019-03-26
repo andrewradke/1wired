@@ -40,7 +40,7 @@ my $metric = "onewired";
 my $ConfigFile = '/etc/onewired/onewired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $LogLevel, $UseInfluxDB, $InfluxDBAddress, $InfluxDBUser, $InfluxDBPasswd, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $DisconnectOnSlowDown, $LogLevel, $UseInfluxDB, $InfluxDBAddress, $InfluxDBUser, $InfluxDBPasswd, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -1033,12 +1033,12 @@ sub monitor_linkhub {
     ### End query of devices on LinkHub
 
     $count = 0 if ($count > 1);
-    if ($SlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the onewire master
+    if ($SlowDown && $DisconnectOnSlowDown) {		# This will slow down the rate of queries and close the socket allowing other connections to the onewire master
       logmsg 5, "INFO: Finished loop for $LinkDev, closing socket.";
       close ($socket) if (defined($socket));
       $socket = undef;
-      sleep $SlowDown;
     }
+    sleep $SlowDown;
   }
 }
 
@@ -2009,6 +2009,7 @@ sub reload {
   my $OldSleepTime = $SleepTime;
   my $OldRunAsDaemon = $RunAsDaemon;
   my $OldSlowDown = $SlowDown;
+  my $OldDisconnectOnSlowDown = $DisconnectOnSlowDown;
   my $OldLogLevel = $LogLevel;
   my $OldUseInfluxDB = $UseInfluxDB;
   my $OldInfluxDBAddress = $InfluxDBAddress;
@@ -2057,6 +2058,11 @@ sub reload {
   }
   if ( $OldSlowDown ne $SlowDown ) {
     $msg = "SlowDown changed from '$OldSlowDown' to '$SlowDown'";
+    logmsg(1, $msg);
+    $output .= $msg."\n";
+  }
+  if ( $OldDisconnectOnSlowDown ne $DisconnectOnSlowDown ) {
+    $msg = "DisconnectOnSlowDown changed from '$OldDisconnectOnSlowDown' to '$DisconnectOnSlowDown'";
     logmsg(1, $msg);
     $output .= $msg."\n";
   }
@@ -3123,6 +3129,7 @@ sub ParseConfigFile {
   $SleepTime = 0;
   $RunAsDaemon = 1;
   $SlowDown = 0;
+  $DisconnectOnSlowDown = 0;
   $LogLevel = 5;
   $UseRRDs = 0;
   $RRDsDir = '/var/onewired';
@@ -3186,6 +3193,16 @@ sub ParseConfigFile {
           $SlowDown = $value;
         } else {
           print STDERR "SlowDown value defined in config file ($value) is not a number. Using default ($SlowDown).\n";
+        }
+      } elsif ($option eq 'DisconnectOnSlowDown') {
+        if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
+          if ($value =~ m/^(0|false|no)$/i) {
+            $DisconnectOnSlowDown = 0;
+          } else {
+            $DisconnectOnSlowDown = 1;
+          }
+        } else {
+          print STDERR "DisconnectOnSlowDown value defined in config file ($value) is not valid. Using default ($DisconnectOnSlowDown).\n";
         }
       } elsif ($option eq 'AutoSearch') {
         if ($value =~ m/^(1|0|true|false|yes|no)$/i) {
@@ -3388,7 +3405,7 @@ sub LinkConnect {
     logmsg 4, "Couldn't connect to $LinkDev $!, retrying... (attempt $retry)";
     sleep 1;
   }
-  if ($SlowDown) {
+  if ($SlowDown && $DisconnectOnSlowDown) {
     logmsg 5, "Connected to $LinkDev" if ($socket);
   } else {
     logmsg 3, "Connected to $LinkDev" if ($socket);
@@ -3451,7 +3468,7 @@ sub LinkData {
 sub Reset {
   my $returned = LinkData("r\n");			# issue a 1-wire reset
   if ( (! CheckData($returned)) or ($returned eq '') ) {
-    logmsg 2, "Reset on $main::LinkDev returned '$returned' (expected 'P' or 'N')";
+    logmsg 4, "Reset on $main::LinkDev returned '$returned' (expected 'P' or 'N')";
     return 0;
   }
   return 1;
@@ -3476,7 +3493,7 @@ sub CheckData {
       return 0;
     }
     if ($returned eq '') {
-      logmsg 1, "ERROR on $main::LinkDev: no data returned.";
+      logmsg 3, "ERROR on $main::LinkDev: no data returned.";
       $MastersData{$main::LinkDev}{DataError}++;
       return 0;
     }
