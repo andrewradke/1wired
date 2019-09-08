@@ -2767,6 +2767,9 @@ sub RecordInfluxDB {
     foreach $address (@addresses) {
       $name        = $data{$address}{name};
       $type        = $data{$address}{type};
+
+      next if ($type eq 'ds2401');
+
       if (! defined($data{$address}{age}) ) {
         logmsg 1, "ERROR for $name: No data for InfluxDB update. Skipping.";
         next;
@@ -2781,8 +2784,6 @@ sub RecordInfluxDB {
         logmsg (2, "homie device $name doesn't have any defined nodes, skipping InfluxDB update.");
         next;
       }
-
-      next if ($type eq 'ds2401');
 
       $type        =~ s/^pressure[0-9.]+$/pressure/;
       $type        =~ s/^depth[0-9.]+$/depth/;
