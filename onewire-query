@@ -101,7 +101,7 @@ if ($statecheck) {
     chomp;
     s/\w*#.*//;
     next if (m/^\s*$/);
-    if (m/^([A-Za-z0-9-_]+)\s+([A-Za-z0-9_]+)\s+(.*)\s*$/) {
+    if (m/^([A-Za-z0-9-_]+)\s+([A-Za-z0-9-_]+)\s+(.*)\s*$/) {
       if (lc($device) eq lc($1) && lc($test) eq lc($2)) {
         $StateData = $3;
         if ($StateData =~ m/^([0-9<>=.,-]+);\s*([0-9<>=.,-]*);\s*([0-9<>=.,-]*)\s*$/) {
