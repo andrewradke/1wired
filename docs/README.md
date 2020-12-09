@@ -15,11 +15,35 @@ Some extra libraries are required:
 * libdevice-serialport-perl
 * libdigest-crc-perl
 * libproc-daemon-perl
-* librrds-perl
+* librrds-perl (for RRD support, will be removed in the future)
+* libwww-perl (for InfluxDB support)
 
 ### Installing
 
 There is currently no install script so a few things need creating manually.
+
+A likely set of commands on a Debian like system is:
+```
+apt install libdigest-crc-perl libproc-daemon-perl librrds-perl libdevice-serialport-perl libwww-perl
+cp onewired.service /lib/systemd/system/
+chown root:root onewired.service /lib/systemd/system/
+cp onewired /usr/local/sbin/onewired
+chown root:root /usr/local/sbin/onewired
+chmod 755 /usr/local/sbin/onewired
+cp onewire-* /usr/local/bin/
+chown root:root /usr/local/bin/onewire-*
+chmod 755 /usr/local/bin/onewire-*
+systemctl daemon-reload
+mkdir /run/onewired
+useradd -r -d /run/onewired -s /usr/sbin/nologin onewired
+mkdir /etc/onewired
+vi /etc/onewired/onewired.conf
+vi /etc/onewired/devices
+vi /etc/onewired/state
+vi /etc/onewired/low_state
+systemctl enable onewired.service
+systemctl start onewired.service
+```
 
 ## Future planned development
 

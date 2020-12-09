@@ -4,11 +4,11 @@ After=network.target
 
 [Service]
 RuntimeDirectory=onewired
-WorkingDirectory=/var/run/onewired
+WorkingDirectory=/run/onewired
 ExecStart=/usr/local/sbin/onewired
 Restart=on-failure
 #Type=forking
-PIDFile=/var/run/onewired/onewired.pid
+PIDFile=/run/onewired/onewired.pid
 User=onewired
 
 [Install]
