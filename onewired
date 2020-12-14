@@ -2563,26 +2563,26 @@ sub reload {
   if (! (join(', ', sort(@OldEasyIOSubs)) eq join(', ', sort(@EasyIOSubs))) ) {
     my %OldEasyIOSubs = map { $_ => 1 } @OldEasyIOSubs;
     my %EasyIOSubs = map { $_ => 1 } @EasyIOSubs;
-    foreach my $Homie (@OldEasyIOSubs) {
-      if (! defined($EasyIOSubs{$Homie}) ) {
-        logmsg(1, "HomieMaster removed: $Homie");
+    foreach my $EasyIO (@OldEasyIOSubs) {
+      if (! defined($EasyIOSubs{$EasyIO}) ) {
+        logmsg(1, "EasyIOMaster removed: $EasyIO");
         foreach (keys(%data)) {
-          delete $data{$_} if ( $data{$_}{master} eq $Homie );
+          delete $data{$_} if ( $data{$_}{master} eq $EasyIO );
         }
-        delete $MastersData{$Homie};
-        delete $addresses{$Homie};
-        $threads{$Homie}->kill('KILL')->detach();
-        $threadNames[$threads{$Homie}->tid] = undef;
-        delete $threads{$Homie};
+        delete $MastersData{$EasyIO};
+        delete $addresses{$EasyIO};
+        $threads{$EasyIO}->kill('KILL')->detach();
+        $threadNames[$threads{$EasyIO}->tid] = undef;
+        delete $threads{$EasyIO};
       }
     }
-    foreach my $Homie (@EasyIOSubs) {
-      if (! defined($OldEasyIOSubs{$Homie}) ) {
-        logmsg(1, "HomieMaster added: $Homie");
-        $MastersData{$Homie} = &share( {} );
-        $addresses{$Homie} = &share( [] );
-        $threads{$Homie} = shared_clone(threads->create(\&monitor_homiesub, $Homie));
-        $threadNames[$threads{$Homie}->tid] = $Homie;
+    foreach my $EasyIO (@EasyIOSubs) {
+      if (! defined($OldEasyIOSubs{$EasyIO}) ) {
+        logmsg(1, "EasyIOMaster added: $EasyIO");
+        $MastersData{$EasyIO} = &share( {} );
+        $addresses{$EasyIO} = &share( [] );
+        $threads{$EasyIO} = shared_clone(threads->create(\&monitor_homiesub, $EasyIO));
+        $threadNames[$threads{$EasyIO}->tid] = $EasyIO;
       }
     }
   }
