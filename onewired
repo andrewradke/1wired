@@ -40,7 +40,7 @@ my $metric = "onewired";
 my $ConfigFile = '/etc/onewired/onewired.conf';
 $ConfigFile = shift if ($ARGV[0]);
 
-my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, $HomieUser, $HomiePasswd, $SleepTime, $RunAsDaemon, $SlowDown, $DisconnectOnSlowDown, $LogLevel, $UseInfluxDB, $InfluxDBAddress, $InfluxDBUser, $InfluxDBPasswd, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
+my ($LogFile, $DeviceFile, $PidFile, $ListenPort, @LinkHubs, @LinkTHs, @MQTTSubs, @HomieSubs, @EasyIOSubs, $MQTTUser, $MQTTPasswd, $SleepTime, $RunAsDaemon, $SlowDown, $DisconnectOnSlowDown, $LogLevel, $UseInfluxDB, $InfluxDBAddress, $InfluxDBUser, $InfluxDBPasswd, $UseRRDs, $RRDsDir, $AutoSearch, $ReSearchOnError, $UpdateMSType, $umask) :shared;
 
 ParseConfigFile();
 
@@ -173,6 +173,13 @@ foreach my $HomieSub (@HomieSubs) {
   $addresses{$HomieSub} = &share( [] );
   $threads{$HomieSub} = shared_clone(threads->create(\&monitor_homiesub, $HomieSub));
   $threadNames[$threads{$HomieSub}->tid] = $HomieSub;
+}
+
+foreach my $EasyIOSub (@EasyIOSubs) {
+  $MastersData{$EasyIOSub} = &share( {} );
+  $addresses{$EasyIOSub} = &share( [] );
+  $threads{$EasyIOSub} = shared_clone(threads->create(\&monitor_easyIOsub, $EasyIOSub));
+  $threadNames[$threads{$EasyIOSub}->tid] = $EasyIOSub;
 }
 
 $threads{threadstatus} = shared_clone(threads->create(\&monitor_threadstatus));
@@ -1490,8 +1497,8 @@ sub monitor_homiesub {
     logmsg 4, "Connecting by $MasterType to $HomieSub";
     my $cmd = "mosquitto_sub -v -t $HomieTopic";
     $cmd .= " -h $HomieHost"   if ( (defined($HomieHost))   && ($HomieHost   ne '') );
-    $cmd .= " -u $HomieUser"   if ( (defined($HomieUser))   && ($HomieUser   ne '') );
-    $cmd .= " -P $HomiePasswd" if ( (defined($HomiePasswd)) && ($HomiePasswd ne '') );
+    $cmd .= " -u $MQTTUser"   if ( (defined($MQTTUser))   && ($MQTTUser   ne '') );
+    $cmd .= " -P $MQTTPasswd" if ( (defined($MQTTPasswd)) && ($MQTTPasswd ne '') );
     while (! ($pid = open(RETURNED, "$cmd 2>&1 |") ) ) {
       logmsg 2, "Failed to connect to $MasterType $HomieSub. Sleeping for 10 seconds before retrying";
       sleep 10;						# Wait for 10 seconds before retrying
@@ -1732,6 +1739,337 @@ sub monitor_homiesub {
     }
     close(RETURNED);
     logmsg 1, "ERROR on $HomieSub: Connection closed. Sleeping 1 second before retrying.";
+    sleep 1;
+  }
+}
+
+sub monitor_easyIOsub {
+  my $EasyIOSub = shift;
+  my $tid = threads->tid();
+  $0 = $EasyIOSub;
+  my $pid;
+  my $easyIOHost;
+  my $easyIOTopic = $EasyIOSub;
+
+  $SIG{'KILL'} = sub {
+    logmsg(3, "Stopping monitor_easyIOsub thread for $EasyIOSub.");
+    kill 9, $pid;
+    close(RETURNED);
+    threads->exit();
+  };
+
+  local $SIG{'ALRM'} = sub {
+    logmsg(1, "Disconnecting from $EasyIOSub due to timeout.");
+    kill('KILL', $pid);
+    close(RETURNED);
+  };
+
+  if (! ($EasyIOSub =~ m/^([^:]+:|)([^\/]+\/.+)$/) ) {
+    logmsg(1, "MQTT broker and/or easyIO topic defined in config file ($EasyIOSub) is not valid (.*/.*). Exiting.");
+    threads->exit();
+  } else {
+    $easyIOHost = $1;
+    $easyIOTopic = $2;
+    $easyIOHost =~ s/:$//;
+  }
+  logmsg 1, "Monitoring easyIO $EasyIOSub";
+  our $MasterType = 'easyIO';
+
+  $MastersData{$EasyIOSub}{channels} = 0;		# channel reporting is not relevant to easyIO
+
+  my %localaddresses;
+
+  my $returned;
+
+  my ($property, $value);
+  my $address;
+  my ($type, $name);
+
+  LOOP: while (1) {
+    $MastersData{$EasyIOSub}{Restart} = 0;		# Default to not needing to restart the subscription
+    logmsg 4, "Connecting by $MasterType to $EasyIOSub";
+    my $cmd = "mosquitto_sub -v -t $easyIOTopic";
+    $cmd .= " -h $easyIOHost"   if ( (defined($easyIOHost))   && ($easyIOHost   ne '') );
+    $cmd .= " -u $MQTTUser"   if ( (defined($MQTTUser))   && ($MQTTUser   ne '') );
+    $cmd .= " -P $MQTTPasswd" if ( (defined($MQTTPasswd)) && ($MQTTPasswd ne '') );
+    while (! ($pid = open(RETURNED, "$cmd 2>&1 |") ) ) {
+      logmsg 2, "Failed to connect to $MasterType $EasyIOSub. Sleeping for 10 seconds before retrying";
+      sleep 10;						# Wait for 10 seconds before retrying
+    }
+
+    while ($returned = <RETURNED>) {
+      if ($MastersData{$EasyIOSub}{Restart}) {		# A setting has changed that requires the subscription to be restarted
+        logmsg 1, "Restart of subscription required on $MasterType $EasyIOSub due to config change.";
+        $MastersData{$EasyIOSub}{Restart} = 0;		# A restart won't be needed after this
+        kill('KILL', $pid);
+        last;
+      }
+      if ($returned =~ m/^Connection Refused: /) {
+        chomp($returned);
+        logmsg 1, "ERROR on $EasyIOSub: '$returned'";
+        next;
+      }
+
+      $agedata{$EasyIOSub} = time();
+
+      foreach my $value (split(/\r?\n/, $returned)) {
+        if ($value =~ m!^([^/]+)/([^/]+) \(null\)$!) {		# address has been set to null so remove from list
+          delete $localaddresses{$2};
+          logmsg 2, "Removed $2 on $EasyIOSub";
+          (@{$addresses{$EasyIOSub}}) = (keys(%localaddresses));
+          $MastersData{$EasyIOSub}{SearchTime} = time();
+          foreach my $nodeid (keys(%{$data{$2}{node}})) {
+            delete $data{$2}{node}{$nodeid};
+          }
+          foreach my $key (keys(%{$data{$2}})) {
+            delete $data{$2}{$key};
+          }
+          delete $data{$2};
+          next;
+        }
+
+        # easyIO/<easyIO>/<sensor>/<measurement_name>/unit	JSON
+        # easyIO/oak-bms-bsa/oak-pivot-O2/power/boolean		{"out1": 1.0}
+        # easyIO/oak-bms-bsa/oak-TF2/pressure/psi		{"out": 121.2}
+        # easyIO/oak-bms-bsa/oak-pivot-O6/VSD-status/int	{"outInt": 0}
+
+        my $topic = '';
+        $address = '';
+        my $key = '';
+        my $parent = '';
+
+        my $goodData = 0;
+        if ( $value =~ s!^([^/]+)/([^/]+)/([^/]+)/([^/]+/[^ ]+) !!) {
+          $topic = $1;
+          $parent = $2;
+          $address = $3;
+          $key = $4;
+          $goodData = 1;
+        } elsif ( $value =~ s!^([^/]+)/([^/]+)/([^/]+/[^ ]+) !!) {
+          $topic = $1;
+          $address = $2;
+          $key = $3;
+          $goodData = 1;
+        }
+
+        if ( ! $goodData ) {
+          logmsg 2, "ERROR on $EasyIOSub: invalid data '$returned'";
+          next;
+        }
+
+        logmsg 6, "DEBUG parent: '$parent', topic: '$topic', address: '$address', key: '$key', value: '$value'";
+        if ( ($key =~ m!/set$!) ) {
+          chomp($returned);
+          logmsg 4, "INFO on $EasyIOSub: ignoring set command for $address: '$returned'";
+          next;
+        }
+
+        if (! defined($data{$address})) {
+          $data{$address} = &share( {} );
+        }
+        if (! defined($data{$address}{node})) {
+          $data{$address}{node} = &share( {} );
+        }
+        if ( (! defined($data{$address}{master}) ) || ( $data{$address}{master} ne $EasyIOSub ) ) {
+          if ( (! $localaddresses{$address}) && ($value ne "(null)") ) {
+            $localaddresses{$address} = 1;
+            logmsg 5, "Found $address on $EasyIOSub";
+            push (@{$addresses{$EasyIOSub}}, $address);
+            $MastersData{$EasyIOSub}{SearchTime} = time();
+            $data{$address}{type}	= 'easyio';
+            $data{$address}{nodes}	= '' unless (defined($data{$address}{nodes}));
+            $data{$address}{fwname}	= '' unless (defined($data{$address}{fwname}));
+            $data{$address}{fwversion}	= '' unless (defined($data{$address}{fwversion}));
+            $data{$address}{localip}	= '' unless (defined($data{$address}{localip}));
+            $data{$address}{uptime}	= '' unless (defined($data{$address}{uptime}));
+            $data{$address}{signal}	= '' unless (defined($data{$address}{signal}));
+            $data{$address}{online}	= '' unless (defined($data{$address}{online}));
+            $data{$address}{parent}	= '' unless (defined($data{$address}{parent}));
+          }
+          if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{name})) ) {
+            $data{$address}{name}   = $deviceDB{$address}{name};
+          } else {
+            $data{$address}{name}   = $address;	# This can be overridden by a name value later
+          }
+          $data{$address}{master} = $EasyIOSub;
+          $data{$address}{parent} = $parent;
+        }
+
+        $value = '' if ($value eq "(null)");
+
+        if ( $key =~ s/^\$// ) {
+
+          if ( $key eq "log" ) {
+            logmsg 2, "INFO on $EasyIOSub:$data{$address}{name} log: '$value'";
+          } elsif ( $key eq "name" ) {
+            # Nothing to do here as it has now been set already
+          } elsif ( $key eq "online" ) {
+            if ( ( ( defined($data{$address}{online}) ) && ( $data{$address}{online} ne $value ) ) || ( (! defined($data{$address}{online}) ) && ( $value ne 'true' ) ) ) {
+              if ( $value eq "true" ) {
+                logmsg 1, "INFO on $EasyIOSub:$data{$address}{name}: (query) Sensor now online.";
+              } else {
+                logmsg 1, "WARNING on $EasyIOSub:$data{$address}{name}: (query) Sensor offline.";
+              }
+            }
+            $data{$address}{$key} = $value;
+          } elsif ( $key eq "uptime" ) {
+            if ( ( defined($data{$address}{uptime}) ) && ( $data{$address}{uptime} ne "" ) && ( $data{$address}{uptime} > $value ) ) {
+              logmsg 1, "WARNING on $EasyIOSub:$data{$address}{name}: (query) Sensor rebooted, previous uptime $data{$address}{uptime} seconds.";
+            }
+            $data{$address}{$key} = $value;
+          } elsif ( $key eq "signal" ) {
+            if ( ( $value < -93 ) && ($data{$address}{localip} ne '') ) {	# if it doesn't have an IP address it is probably a LoRa radio
+              # -93 dBm is fairly arbitrary but experience shows that ESP8266's are completely stable to -90 dBm and usually to at least -97 dBm
+              logmsg 1, "$EasyIOSub:$data{$address}{name} $data{$address}{localip}";
+              logmsg 1, "WARNING on $EasyIOSub:$data{$address}{name}: (query) WiFi signal very weak: $value dBm";
+            }
+            $data{$address}{$key} = $value;
+          } elsif ( $key eq "nodes" ) {
+            if ( $data{$address}{$key} ne $value ) {
+              logmsg 2, "INFO on $EasyIOSub:$data{$address}{name}: $key changed from '$data{$address}{$key}' to '$value'" if ( $data{$address}{$key} ne '' );
+              my %oldnodes;
+              foreach my $nodeid (keys(%{$data{$address}{node}})) {
+                $oldnodes{$nodeid} = 1;
+              }
+
+              foreach my $node (split(/,/, $value)) {
+                my ($nodeid, $property) = $node =~ m!(.*):(.*)!;
+                if ( defined($oldnodes{$nodeid}) ) {
+                  delete $oldnodes{$nodeid};
+                }
+                if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
+                  $nodeid = 'depth';
+                  $property = 'm';
+                }
+                if (! defined($data{$address}{node}{$nodeid})) {
+                  $data{$address}{node}{$nodeid} = &share( {} );
+                  logmsg 2, "INFO on $EasyIOSub:$data{$address}{name}: node $nodeid added" if ( $data{$address}{$key} ne '' );
+                }
+                $data{$address}{node}{$nodeid}{type}  = $property;
+                $data{$address}{node}{$nodeid}{value} = 'NA';
+              }
+
+              foreach my $nodeid (keys(%oldnodes)) {
+                delete $data{$address}{node}{$nodeid};
+                logmsg 2, "INFO on $EasyIOSub:$data{$address}{name}: node $nodeid removed";
+              }
+            }
+            $data{$address}{$key} = $value;
+          } else {
+            if ( ( defined($data{$address}{$key}) ) && ( $data{$address}{$key} ne '' ) && ( $data{$address}{$key} ne $value ) && $key ne 'latency' ) {
+              logmsg 2, "INFO on $EasyIOSub:$data{$address}{name}: $key changed from $data{$address}{$key} to $value";
+            }
+            $data{$address}{$key} = $value;
+          }
+        } else {
+
+          my ($nodeid, $property) = $key =~ m!(.*)/(.*)!;
+
+          if ($value eq "{}") {
+            logmsg 3, "$EasyIOSub:$data{$address}{name}: $nodeid $property received empty data";
+            next;
+          }
+
+          $value =~ s/^{"out[^"]*": (.+)}$/\1/;
+          logmsg 5, "DEBUG on $EasyIOSub:$data{$address}{name}: $nodeid $property: value $value";
+
+          $value = 1 if ($value =~ m/^(true|yes)$/i);
+          $value = 0 if ($value =~ m/^(false|no)$/i);
+
+          if ((defined($deviceDB{$address})) && (defined($deviceDB{$address}{type})) && ( $deviceDB{$address}{type} =~ m/^depth-(\d+)$/ ) && ($nodeid eq 'distance') ) {
+            $nodeid = 'depth';
+            $value = ($1 - $value)/100;
+          }
+
+          # This should've been defined when receiving the $nodes property above but check in case that hasn't been recieved.
+          if (! defined($data{$address}{node}{$nodeid})) {
+            $data{$address}{node}{$nodeid} = &share( {} );
+            logmsg 5, "INFO on $EasyIOSub:$data{$address}{name}: adding node $nodeid";
+            if ( (defined($data{$address}{nodes})) && ($data{$address}{nodes} ne '') ) {
+              $data{$address}{nodes} .= ",$nodeid:$property"
+            } else {
+              $data{$address}{nodes} = "$nodeid:$property"
+            }
+          }
+          $data{$address}{node}{$nodeid}{type} = $property;
+          $data{$address}{node}{$nodeid}{value} = $value;
+
+          if ($UseInfluxDB) {
+            my $timestamp = time();
+            $name  = $data{$address}{name};
+            $type  = $data{$address}{type};
+            $value = $data{$address}{node}{$nodeid}{value};
+            if ($value ne 'nan') {
+              $value =~ s/ //g;
+              if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
+                # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(sprintf "%0.0f", $value)." $timestamp\n";
+              } elsif ($data{$address}{node}{$nodeid}{type} eq 'switch') {
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=".(($value eq 'open') ? 0 : 1)." $timestamp\n";
+              } else {
+                $influx_lines .= "$metric,device=$name,sensor=$nodeid value=$value $timestamp\n";
+              }
+            } else {
+              logmsg 4, "INFO on $EasyIOSub:$data{$address}{name}: ignoring a empty value when updating InfluxDB.";
+            }
+          }
+
+          my $thisminute = int(time()/60)*60;		# Round off to previous minute mark
+
+          if ($data{$address}{node}{$nodeid}{type} ne 'switch') {
+            if (! defined($data{$address}{node}{$nodeid}{MinuteMax})) {
+              $data{$address}{node}{$nodeid}{MinuteMax}		= $value;
+              $data{$address}{node}{$nodeid}{TimeMax}		= time();
+            } else {
+              if ( $data{$address}{node}{$nodeid}{TimeMax} < $thisminute ) {
+                $data{$address}{node}{$nodeid}{FiveMinuteMax}	= $data{$address}{node}{$nodeid}{FourMinuteMax};
+                $data{$address}{node}{$nodeid}{FiveTimeMax}	= $data{$address}{node}{$nodeid}{FourTimeMax};
+                $data{$address}{node}{$nodeid}{FourMinuteMax}	= $data{$address}{node}{$nodeid}{ThreeMinuteMax};
+                $data{$address}{node}{$nodeid}{FourTimeMax}	= $data{$address}{node}{$nodeid}{ThreeTimeMax};
+                $data{$address}{node}{$nodeid}{ThreeMinuteMax}	= $data{$address}{node}{$nodeid}{TwoMinuteMax};
+                $data{$address}{node}{$nodeid}{ThreeTimeMax}	= $data{$address}{node}{$nodeid}{TwoTimeMax};
+                $data{$address}{node}{$nodeid}{TwoMinuteMax}	= $data{$address}{node}{$nodeid}{OneMinuteMax};
+                $data{$address}{node}{$nodeid}{TwoTimeMax}	= $data{$address}{node}{$nodeid}{OneTimeMax};
+                $data{$address}{node}{$nodeid}{OneMinuteMax}	= $data{$address}{node}{$nodeid}{MinuteMax};
+                $data{$address}{node}{$nodeid}{OneTimeMax}	= $data{$address}{node}{$nodeid}{TimeMax};
+                $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMax}		= time();
+              } elsif ($value > $data{$address}{node}{$nodeid}{MinuteMax}) {
+                $data{$address}{node}{$nodeid}{MinuteMax}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMax}		= time();
+              }
+            }
+
+            if (! defined($data{$address}{node}{$nodeid}{MinuteMin})) {
+              $data{$address}{node}{$nodeid}{MinuteMin}		= $value;
+              $data{$address}{node}{$nodeid}{TimeMin}		= time();
+            } else {
+              if ( $data{$address}{node}{$nodeid}{TimeMin} < $thisminute ) {
+                $data{$address}{node}{$nodeid}{FiveMinuteMin}	= $data{$address}{node}{$nodeid}{FourMinuteMin};
+                $data{$address}{node}{$nodeid}{FiveTimeMin}	= $data{$address}{node}{$nodeid}{FourTimeMin};
+                $data{$address}{node}{$nodeid}{FourMinuteMin}	= $data{$address}{node}{$nodeid}{ThreeMinuteMin};
+                $data{$address}{node}{$nodeid}{FourTimeMin}	= $data{$address}{node}{$nodeid}{ThreeTimeMin};
+                $data{$address}{node}{$nodeid}{ThreeMinuteMin}	= $data{$address}{node}{$nodeid}{TwoMinuteMin};
+                $data{$address}{node}{$nodeid}{ThreeTimeMin}	= $data{$address}{node}{$nodeid}{TwoTimeMin};
+                $data{$address}{node}{$nodeid}{TwoMinuteMin}	= $data{$address}{node}{$nodeid}{OneMinuteMin};
+                $data{$address}{node}{$nodeid}{TwoTimeMin}	= $data{$address}{node}{$nodeid}{OneTimeMin};
+                $data{$address}{node}{$nodeid}{OneMinuteMin}	= $data{$address}{node}{$nodeid}{MinuteMin};
+                $data{$address}{node}{$nodeid}{OneTimeMin}	= $data{$address}{node}{$nodeid}{TimeMin};
+                $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMin}		= time();
+              } elsif ($value < $data{$address}{node}{$nodeid}{MinuteMin}) {
+                $data{$address}{node}{$nodeid}{MinuteMin}	= $value;
+                $data{$address}{node}{$nodeid}{TimeMin}		= time();
+              }
+            }
+          }
+
+          $data{$address}{age} = time();
+        }
+      }
+    }
+    close(RETURNED);
+    logmsg 1, "ERROR on $EasyIOSub: Connection closed. Sleeping 1 second before retrying.";
     sleep 1;
   }
 }
@@ -2006,8 +2344,9 @@ sub reload {
   my @OldLinkTHs = @LinkTHs;
   my @OldMQTTSubs = @MQTTSubs;
   my @OldHomieSubs = @HomieSubs;
-  my $OldHomieUser = $HomieUser;
-  my $OldHomiePasswd = $HomiePasswd;
+  my @OldEasyIOSubs = @EasyIOSubs;
+  my $OldMQTTUser = $MQTTUser;
+  my $OldMQTTPasswd = $MQTTPasswd;
   my $OldSleepTime = $SleepTime;
   my $OldRunAsDaemon = $RunAsDaemon;
   my $OldSlowDown = $SlowDown;
@@ -2221,21 +2560,53 @@ sub reload {
       }
     }
   }
-  if ( $OldHomieUser ne $HomieUser ) {
-    $msg = "HomieUser changed from '$OldHomieUser' to '$HomieUser', restarting Homie subscriptions.";
+  if (! (join(', ', sort(@OldEasyIOSubs)) eq join(', ', sort(@EasyIOSubs))) ) {
+    my %OldEasyIOSubs = map { $_ => 1 } @OldEasyIOSubs;
+    my %EasyIOSubs = map { $_ => 1 } @EasyIOSubs;
+    foreach my $Homie (@OldEasyIOSubs) {
+      if (! defined($EasyIOSubs{$Homie}) ) {
+        logmsg(1, "HomieMaster removed: $Homie");
+        foreach (keys(%data)) {
+          delete $data{$_} if ( $data{$_}{master} eq $Homie );
+        }
+        delete $MastersData{$Homie};
+        delete $addresses{$Homie};
+        $threads{$Homie}->kill('KILL')->detach();
+        $threadNames[$threads{$Homie}->tid] = undef;
+        delete $threads{$Homie};
+      }
+    }
+    foreach my $Homie (@EasyIOSubs) {
+      if (! defined($OldEasyIOSubs{$Homie}) ) {
+        logmsg(1, "HomieMaster added: $Homie");
+        $MastersData{$Homie} = &share( {} );
+        $addresses{$Homie} = &share( [] );
+        $threads{$Homie} = shared_clone(threads->create(\&monitor_homiesub, $Homie));
+        $threadNames[$threads{$Homie}->tid] = $Homie;
+      }
+    }
+  }
+  if ( $OldMQTTUser ne $MQTTUser ) {
+    $msg = "MQTTUser changed from '$OldMQTTUser' to '$MQTTUser', restarting Homie subscriptions.";
     logmsg(1, $msg);
     $output .= $msg."\n";
     foreach my $HomieSub (@HomieSubs) {
       $MastersData{$HomieSub}{Restart} = 1;		# We need to restart the subscription to use the new values
     }
+    foreach my $EasyIOSub (@EasyIOSubs) {
+      $MastersData{$EasyIOSub}{Restart} = 1;		# We need to restart the subscription to use the new values
+    }
     ### Set variable requiring restart of mosquitto_sub
   }
-  if ( $OldHomiePasswd ne $HomiePasswd ) {
-    $msg = "HomiePasswd changed from '$OldHomiePasswd' to '$HomiePasswd', restarting Homie subscriptions.";
+  if ( $OldMQTTPasswd ne $MQTTPasswd ) {
+    $msg = "MQTTPasswd changed from '$OldMQTTPasswd' to '$MQTTPasswd', restarting Homie subscriptions.";
     logmsg(1, $msg);
     $output .= $msg."\n";
     foreach my $HomieSub (@HomieSubs) {
       $MastersData{$HomieSub}{Restart} = 1;		# We need to restart the subscription to use the new values
+    }
+    foreach my $EasyIOSub (@EasyIOSubs) {
+      $MastersData{$EasyIOSub}{Restart} = 1;		# We need to restart the subscription to use the new values
     }
     ### Set variable requiring restart of mosquitto_sub
   }
@@ -2429,7 +2800,7 @@ sub value_all {
         $rain           = 'NA' unless defined($rain);
         $OutputData{$name} = sprintf "%-18s - %11s: %-10s                 (age: %3s s)  %s%s\n",             $name, $type, $rain, $age, $master, $channel;
 
-      } elsif ($type eq 'homie') {
+      } elsif ( ($type eq 'homie') || ($type eq 'easyio') ) {
         $OutputData{$name} = sprintf "%-18s - ", $name;
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           $OutputData{$name} .= sprintf " %11s: ", $nodeid;
@@ -2615,6 +2986,15 @@ sub value {
         $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
         $output        .= "nodes: $data{$address}{nodes}\nfwname: $data{$address}{fwname}\nfwversion: $data{$address}{fwversion}\nipaddress: $data{$address}{localip}\nuptime: $data{$address}{uptime}\nsignal: $data{$address}{signal} dBm\nonline: $data{$address}{online}\n";
 
+      } elsif ($type eq 'easyio') {
+        $output        .= "name: $name\naddress: $address\ntype: $type\n";
+        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
+          $output      .= $nodeid . ": ";
+          $output      .= $data{$address}{node}{$nodeid}{value} . "\n";
+        }
+        $output        .= "age: $age\nRawAge: $rawage\nmaster: $master\nConfigType: $configtype\n";
+        $output        .= "parent: $data{$address}{parent}\nnodes: $data{$address}{nodes}\n";
+
       } elsif ($type =~ m/^arduino-/) {
         my $arduino     = $data{$address}{arduino};
         $arduino        = 'unknown' unless defined($arduino);
@@ -2775,12 +3155,13 @@ sub RecordInfluxDB {
         next;
       }
       $age         = time() - $data{$address}{age};
-      if ($age > 60 && $type ne 'homie') {					# homie devices will be storing their data as it's received so the age here would only apply to the signal or latency
+      # homie devices will be storing their data as it's received so the age here would only apply to the signal or latency
+      if ($age > 60 && ( ($type eq 'homie') || ($type eq 'easyio') ) ) {
         logmsg 1, "ERROR for $name: Age of data ($age) for InfluxDB update is > 60s. Skipping.";
         next;
       }
       next if (! defined($deviceDB{$address}));
-      if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into InfluxDB
+      if ( ( ($type eq 'homie') || ($type eq 'easyio') ) && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into InfluxDB
         logmsg (2, "homie device $name doesn't have any defined nodes, skipping InfluxDB update.");
         next;
       }
@@ -2793,7 +3174,7 @@ sub RecordInfluxDB {
         $influx_lines .= "$metric,device=$name,sensor=temperature value=$data{$address}{temperature} $timestamp\n";
       } elsif ( ($type eq 'rain')  && ($data{$address}{rain} ne 'NA') ) {
         $influx_lines .= "$metric,device=$name,sensor=rain value=$data{$address}{rain} $timestamp\n";
-      } elsif ($type eq 'homie') {
+      } elsif ( ($type eq 'homie') || ($type eq 'easyio') ) {
 #        foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
 #          if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
 #            # Does this need to be treated differently in InfluxDB to a 'GAUGE'?
@@ -2910,7 +3291,7 @@ sub RecordRRDs {
       $name        = $data{$address}{name};
       $type        = $data{$address}{type};
       next if (! defined($deviceDB{$address}));
-      if ( ($type eq 'homie') && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into the RRD
+      if ( ( ($type eq 'homie') || ($type eq 'easyio') ) && ($data{$address}{nodes} eq '') ) {		# We don't know about any nodes yet so we won't be able to put any data into the RRD
         logmsg (2, "homie device $name doesn't have any defined nodes, skipping RRD update.");
         next;
       }
@@ -2939,7 +3320,7 @@ sub RecordRRDs {
           @rrdcmd = (@rrdcmd, "DS:temperature:GAUGE:300:U:U");
         } elsif ($type eq 'rain') {
           @rrdcmd = (@rrdcmd, "DS:rain:COUNTER:300:U:30");
-        } elsif ($type eq 'homie') {
+        } elsif ( ($type eq 'homie') || ($type eq 'easyio') ) {
           foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
             if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
               @rrdcmd = (@rrdcmd, "DS:$nodeid:COUNTER:300:U:U");
@@ -2998,7 +3379,7 @@ sub RecordRRDs {
         $rrdcmd .= ":" . ( (defined($data{$address}{temperature})) ? $data{$address}{temperature} : 'U' );
       } elsif ($type eq 'rain') {
         $rrdcmd .= ":" . ( (defined($data{$address}{rain})) ? $data{$address}{rain} : 'U' );
-      } elsif ($type eq 'homie') {
+      } elsif ( ($type eq 'homie') || ($type eq 'easyio') ) {
         foreach my $nodeid (sort(keys(%{$data{$address}{node}}))) {
           if ( ($data{$address}{node}{$nodeid}{type} eq 'counter') || ($data{$address}{node}{$nodeid}{type} eq 'litres') ) {
             $rrdcmd .= ":" . ( ( (defined($data{$address}{node}{$nodeid}{value})) && ($data{$address}{node}{$nodeid}{value} ne 'NA')) ? sprintf "%0.0f", $data{$address}{node}{$nodeid}{value} : 'U' );
@@ -3106,7 +3487,7 @@ sub monitor_agedata {
   my $age;
   sleep 10;		# give the other threads 10 seconds to get started
   while(1) {
-    foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs) {
+    foreach my $LinkDev (@LinkHubs,@LinkTHs,@MQTTSubs,@HomieSubs,@EasyIOSubs) {
       $age = (time() - $agedata{$LinkDev});
       logmsg (4,"Age data for $LinkDev: $age seconds");
       if ($age > 60) {
@@ -3129,8 +3510,9 @@ sub ParseConfigFile {
   @LinkTHs = ();
   @MQTTSubs = ();
   @HomieSubs = ();
-  $HomieUser = '';
-  $HomiePasswd = '';
+  @EasyIOSubs = ();
+  $MQTTUser = '';
+  $MQTTPasswd = '';
   $SleepTime = 0;
   $RunAsDaemon = 1;
   $SlowDown = 0;
@@ -3164,10 +3546,12 @@ sub ParseConfigFile {
         @MQTTSubs = split(/,\s*/, $value);
       } elsif ($option eq 'HomieSubs') {
         @HomieSubs = split(/,\s*/, $value);
-      } elsif ($option eq 'HomieUser') {
-        $HomieUser = $value;
-      } elsif ($option eq 'HomiePasswd') {
-        $HomiePasswd = $value;
+      } elsif ($option eq 'EasyIOSubs') {
+        @EasyIOSubs = split(/,\s*/, $value);
+      } elsif ($option eq 'MQTTUser') {
+        $MQTTUser = $value;
+      } elsif ($option eq 'MQTTPasswd') {
+        $MQTTPasswd = $value;
       } elsif ($option eq 'LinkTHs') {
         @LinkTHs = split(/,\s*/, $value);
       } elsif ($option eq 'LinkHubs') {
@@ -3343,6 +3727,10 @@ sub ParseDeviceFile {
       if ( $type =~ m/^homie:/ ) {
         $data{$address}{type} = 'homie';
         $deviceDB{$address}{type} =~ s/^homie://;
+      }
+      if ( $type =~ m/^easyio:/ ) {
+        $data{$address}{type} = 'easyio';
+        $deviceDB{$address}{type} =~ s/^easyio://;
       }
     } else {
       logmsg 1, "ERROR: Unrecognised line in devices file: '$_'";
